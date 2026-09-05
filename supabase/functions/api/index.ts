@@ -55,6 +55,8 @@ route("GET", "/v1/health", null, async (_ctx, _p, _b, url) => {
   if (url.searchParams.get("deep") !== "1") return { status: 200, body: { ok: true } };
   // Deep check: database reachable, scheduler registered, provider present. No personal data.
   const db = serviceClient();
+  // Idempotently tell cron where the worker lives (derived from this project's own URL).
+  await db.rpc("register_worker_url", { p_url: `${Deno.env.get("SUPABASE_URL")}/functions/v1/worker` });
   const [owner, sched] = await Promise.all([db.from("app_owner").select("github_login").eq("id", 1).maybeSingle(), db.rpc("scheduler_status")]);
   const s = (sched.data ?? {}) as { workerRegistered?: boolean; jobs?: { name: string; schedule: string; active: boolean; lastRun: unknown }[]; error?: string };
   return {
