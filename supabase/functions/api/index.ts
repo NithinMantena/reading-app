@@ -3,7 +3,7 @@
 // Deployed URL:  https://<project-ref>.supabase.co/functions/v1/api/v1/...
 // Auth:          Bearer <Supabase session JWT>  (website)
 //                Bearer rap_<integration token>  (OpenClaw bot)
-import { authenticate, requireScope, type Ctx, type Scope } from "../_shared/auth.ts";
+import { authenticate, requireScope, serviceClient, type Ctx, type Scope } from "../_shared/auth.ts";
 import { ApiError, CORS_HEADERS, errorResponse, json } from "../_shared/http.ts";
 import { withIdempotency, type Result } from "../_shared/idempotency.ts";
 import * as books from "./handlers/books.ts";
@@ -51,7 +51,24 @@ function route(method: string, path: string, scope: Scope | null, handler: Handl
 
 // --- Route table ---------------------------------------------------------------------
 route("GET", "/v1/me", "read", me.getMe);
-route("GET", "/v1/health", null, async () => ({ status: 200, body: { ok: true } }));
+route("GET", "/v1/health", null, async (_ctx, _p, _b, url) => {
+  if (url.searchParams.get("deep") !== "1") return { status: 200, body: { ok: true } };
+  // Deep check: database reachable, scheduler registered, provider present. No personal data.
+  const db = serviceClient();
+  const [owner, sched] = await Promise.all([db.from("app_owner").select("github_login").eq("id", 1).maybeSingle(), db.rpc("scheduler_status")]);
+  const s = (sched.data ?? {}) as { workerRegistered?: boolean; jobs?: { name: string; schedule: string; active: boolean; lastRun: unknown }[]; error?: string };
+  return {
+    status: 200,
+    body: {
+      ok: !owner.error && !sched.error,
+      db: owner.error ? `error: ${owner.error.message}` : "ok",
+      owner: owner.data?.github_login ?? null,
+      scheduler: sched.error ? `error: ${sched.error.message}` : { workerRegistered: s.workerRegistered ?? false, jobs: (s.jobs ?? []).map((j) => ({ name: j.name, schedule: j.schedule, active: j.active, lastRun: j.lastRun })), error: s.error },
+      provider: Deno.env.get("ANTHROPIC_API_KEY") ? "anthropic" : null,
+      search: Deno.env.get("EXA_API_KEY") ? "exa" : Deno.env.get("BRAVE_API_KEY") ? "brave" : "free-sources-only",
+    },
+  };
+});
 
 route("GET", "/v1/books", "read", books.list);
 route("POST", "/v1/books", "library:write", books.create, { idempotent: true });

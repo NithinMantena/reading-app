@@ -19,7 +19,8 @@ Deno.serve(async (req: Request) => {
     const provided = req.headers.get("x-worker-secret");
     let authorised = false;
     if (provided) {
-      const { data: secret } = await db.rpc("worker_secret");
+      const { data: secret, error } = await db.rpc("worker_secret");
+      if (error) throw new ApiError(500, "secret_unavailable", `worker_secret(): ${error.message}`);
       authorised = Boolean(secret) && provided === secret;
       if (!authorised) throw new ApiError(401, "bad_secret", "Worker secret mismatch");
     } else {
