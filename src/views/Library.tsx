@@ -16,6 +16,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "reading", label: "Reading" },
   { id: "finished", label: "Finished" },
   { id: "stopped", label: "Stopped" },
+  { id: "unknown", label: "Unknown" },
   { id: "archived", label: "Archived" },
 ];
 

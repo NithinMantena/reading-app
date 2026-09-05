@@ -1,8 +1,8 @@
 // Typed client for the /v1 API. All writes go through here so the website and the
 // OpenClaw bot share one set of business rules.
-import { API_BASE, supabase } from "./supabase";
+import { API_BASE, SUPABASE_URL, supabase } from "./supabase";
 import type {
-  Book, FeedbackEvent, IntegrationToken, Job, Paged, Reading, ReadingSession, Settings, Shelf, Batch,
+  Book, FeedbackEvent, GenerationConfig, IntegrationToken, Job, Paged, Reading, ReadingSession, Settings, Shelf, Batch,
 } from "./types";
 
 export class ApiClientError extends Error {
@@ -95,6 +95,18 @@ export const api = {
     create: (body: { kind: string; horizon?: string }) => call<{ jobs: Job[]; warnings: string[] }>("POST", "/recommendation-jobs", body, { idempotent: true }),
     list: () => call<Paged<Job>>("GET", "/jobs"),
     get: (id: string) => call<Job>("GET", `/jobs/${id}`),
+  },
+
+  generation: {
+    config: () => call<GenerationConfig>("GET", "/generation-config"),
+    /** Drive the worker directly from the browser so queued jobs start now rather than at the next cron tick. */
+    step: async (): Promise<{ processed: { jobId: string; status: string; stage: string; message: string }[] }> => {
+      const headers = await authHeader();
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/worker?task=step`, { method: "POST", headers });
+      const json = await res.json();
+      if (!res.ok) throw new ApiClientError(res.status, json?.error?.code ?? "worker_failed", json?.error?.message ?? res.statusText);
+      return json;
+    },
   },
 
   tokens: {

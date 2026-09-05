@@ -82,9 +82,24 @@ npm test                  # period and URL unit tests
 Local Edge Function development needs Docker and `npx supabase start`; the hosted function is
 usually simpler for a single-user app.
 
-## Checklist before enabling Phase 2 generation
+## Enabling generation (Phase 2)
 
-- Model and search providers chosen and priced; secrets set with `supabase secrets set`.
-- Monthly spending cap set in Preferences (0 keeps generation off).
-- Supabase Cron dispatcher scheduled (Phase 2 migration).
-- Private backup or scheduled export in place.
+1. Add repository secrets (Settings → Secrets and variables → Actions):
+   - `ANTHROPIC_API_KEY` (required) from https://console.anthropic.com/settings/keys
+   - `EXA_API_KEY` (recommended for daily/weekly quality) from https://dashboard.exa.ai
+   - `BRAVE_API_KEY` (optional alternative), `OPENALEX_MAILTO` (optional, your email for polite-pool access)
+2. Run the **Deploy backend (Supabase)** workflow. It forwards whichever of those are present to
+   the functions and deploys both `api` and `worker`. The migration also enables `pg_cron` and
+   `pg_net` and schedules the dispatcher and worker ticks.
+3. In the app, Preferences → Generation budget: set a monthly cap above 0 and check the
+   Services and rates table shows the provider and the two cron jobs.
+4. Discover → Generate first editions. Progress shows per shelf; details in Preferences → Generation runs.
+
+Details, costs, and operating notes: `docs/GENERATION.md`.
+
+## Seeding from the spreadsheet export
+
+`npm run seed -- <seed.md> <out.json> [<unresolved.md>]` converts the "Application Seed Data"
+markdown into the import format. Keep the output outside the public repository (it is reading
+history). Import it in Preferences → Your data → Import JSON (preview first), or with the bot:
+`node bot/reading.mjs import <out.json>` to preview and `--commit` to apply.

@@ -14,6 +14,7 @@ export interface Settings {
   exclusions: { kind: string; value: string }[];
   length_preferences: Record<string, number>;
   budget: Record<string, unknown>;
+  sources: { url: string; label?: string }[];
   onboarding_complete: boolean;
   version: number;
   created_at: string;
@@ -95,6 +96,16 @@ export const patch: Handler = async (ctx, _p, body) => {
     const cap = b.monthly_cap_usd === undefined ? current.budget.monthly_cap_usd : Number(b.monthly_cap_usd);
     if (!Number.isFinite(Number(cap)) || Number(cap) < 0) bad("budget.monthly_cap_usd", "must be a non-negative number");
     update.budget = { ...current.budget, ...b, monthly_cap_usd: Number(cap) };
+  }
+  if (body.sources !== undefined) {
+    if (!Array.isArray(body.sources)) bad("sources", "must be an array");
+    update.sources = (body.sources as unknown[]).slice(0, 60).map((it, i) => {
+      const o = (typeof it === "string" ? { url: it } : it) as Record<string, unknown>;
+      const url = optString(o.url, `sources[${i}].url`, 500);
+      if (!url || !/^https?:\/\//i.test(url)) bad(`sources[${i}].url`, "must be an http(s) feed URL");
+      const label = optString(o.label, `sources[${i}].label`, 100) ?? null;
+      return label ? { url, label } : { url };
+    });
   }
   const ob = optBool(body.onboarding_complete, "onboarding_complete");
   if (ob !== undefined) update.onboarding_complete = ob;

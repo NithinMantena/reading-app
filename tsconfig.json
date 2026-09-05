@@ -13,10 +13,11 @@
     "isolatedModules": true,
     "resolveJsonModule": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "baseUrl": ".",
     "paths": {
       "@shared/*": ["supabase/functions/_shared/*"]
     }
   },
-  "include": ["src", "tests", "supabase/functions/_shared/periods.ts", "supabase/functions/_shared/urls.ts", "vite.config.ts"]
+  "include": ["src", "tests", "supabase/functions/_shared/periods.ts", "supabase/functions/_shared/urls.ts", "supabase/functions/_shared/pipeline/compose.ts", "supabase/functions/_shared/pipeline/types.ts", "vite.config.ts"]
 }

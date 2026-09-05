@@ -15,6 +15,7 @@ import * as jobs from "./handlers/jobs.ts";
 import * as tokens from "./handlers/tokens.ts";
 import * as transfer from "./handlers/transfer.ts";
 import * as me from "./handlers/me.ts";
+import * as config from "./handlers/config.ts";
 
 export type Handler = (
   ctx: Ctx,
@@ -81,6 +82,7 @@ route("GET", "/v1/preference-summary", "read", preferences.summary);
 
 route("POST", "/v1/recommendation-jobs", "generation", jobs.create, { idempotent: true });
 route("GET", "/v1/jobs", "read", jobs.list);
+route("GET", "/v1/generation-config", "read", config.get);
 route("GET", "/v1/jobs/:id", "read", jobs.get);
 
 route("GET", "/v1/integration-tokens", "admin", tokens.list);

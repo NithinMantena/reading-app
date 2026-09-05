@@ -34,9 +34,9 @@ tests/                   Unit tests for period windows and URL canonicalisation
 
 | Phase | Scope | State |
 | --- | --- | --- |
-| 1 · Shared foundation | Repo and app link, owner auth, database, book log, wishlist, saved readings, export/import, API, bot add/list/update | **Built; awaiting Supabase project configuration** (see `docs/DEPLOY.md`) |
-| 2 · Discovery | Retrieval and validation pipeline, five shelves, surprise slot, scheduling, edition history, cost visibility | Schema and API contract in place; worker not yet implemented |
-| 3 · Personalisation | Feedback-aware search, derived preference summaries, bot feedback/generation, recovery | Feedback storage and API in place; summaries and ranking not yet implemented |
+| 1 · Shared foundation | Repo and app link, owner auth, database, book log, wishlist, saved readings, export/import, API, bot add/list/update | **Deployed** |
+| 2 · Discovery | Retrieval and validation pipeline, five shelves, surprise slot, scheduling, edition history, cost visibility | **Built** (see `docs/GENERATION.md`); needs `ANTHROPIC_API_KEY` and a budget to run |
+| 3 · Personalisation | Feedback-aware search, derived preference summaries, bot feedback/generation, recovery | Feedback is stored and already supplied to the ranker; derived summaries not yet built |
 
 The product requirements are in `Reading-App-PRD.md` in the parent folder of this repository
 (kept outside the public repo).
@@ -54,6 +54,7 @@ npm test
 
 - [Deployment](docs/DEPLOY.md) — Supabase project, GitHub OAuth, Actions variables, Pages
 - [API v1](docs/API.md) — endpoints, auth, idempotency, versioning
+- [Generation](docs/GENERATION.md) — the discovery pipeline, scheduling, configuration, cost
 - [OpenClaw](docs/OPENCLAW.md) — install the skill and configure the bot token
 
 ## Principles carried into the code

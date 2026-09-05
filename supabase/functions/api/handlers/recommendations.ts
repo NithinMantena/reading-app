@@ -22,7 +22,8 @@ export const get: Handler = async (ctx, _p, _b, url) => {
   for (const h of list) {
     const w = windowFor(h as Horizon, now, settings.time_zone);
     const periodKey = period ?? w.periodKey;
-    let q = ctx.db.from("recommendation_batches").select("*").eq("owner_id", ctx.ownerId).eq("horizon", h).eq("period_key", periodKey);
+    // Only published/partial editions are ever shown as "the" edition; failed runs stay in jobs.
+    let q = ctx.db.from("recommendation_batches").select("*").eq("owner_id", ctx.ownerId).eq("horizon", h).eq("period_key", periodKey).in("status", ["published", "partial"]);
     q = version ? q.eq("version", Number(version)) : q.order("version", { ascending: false });
     const { data: batch, error } = await q.limit(1).maybeSingle();
     if (error) throw fromPgError(error);
@@ -36,9 +37,10 @@ export const get: Handler = async (ctx, _p, _b, url) => {
       if (res.error) throw fromPgError(res.error);
       entries = res.data ?? [];
     }
-    const { data: active } = await ctx.db
-      .from("generation_jobs").select("id, status, stage, updated_at")
-      .eq("owner_id", ctx.ownerId).eq("horizon", h).eq("period_key", periodKey).in("status", ["queued", "running"]).maybeSingle();
+    const { data: lastJob } = await ctx.db
+      .from("generation_jobs").select("id, status, stage, error, attempts, updated_at, created_at, kind")
+      .eq("owner_id", ctx.ownerId).eq("horizon", h).eq("period_key", periodKey).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    const active = lastJob && (lastJob.status === "queued" || lastJob.status === "running") ? lastJob : null;
     shelves.push({
       horizon: h,
       isCurrent: periodKey === w.periodKey,
@@ -46,7 +48,8 @@ export const get: Handler = async (ctx, _p, _b, url) => {
       targetCount: TARGET_COUNTS[h as Horizon],
       batch,
       entries,
-      activeJob: active ?? null,
+      activeJob: active,
+      lastJob: lastJob ?? null,
     });
   }
   return { status: 200, body: horizon ? shelves[0] : { shelves } };

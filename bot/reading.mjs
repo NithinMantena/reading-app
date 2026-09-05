@@ -252,6 +252,17 @@ async function main() {
     return out(await request(cfg, "GET", "/jobs"), opts);
   }
 
+  if (group === "import") {
+    // import <file.json> [--commit]   (preview by default; nothing existing is overwritten)
+    const file = action ?? opts.file;
+    if (!file) fail("import needs a path to a reading-app-export JSON file");
+    const data = JSON.parse(readFileSync(String(file), "utf8"));
+    const mode = opts.commit === true ? "commit" : "preview";
+    return out({ mode, ...(await request(cfg, "POST", "/import", { mode, data })) }, opts);
+  }
+
+  if (group === "config") return out(await request(cfg, "GET", "/generation-config"), opts);
+
   if (group === "export") {
     const data = await request(cfg, "GET", "/export");
     if (opts.out) {
@@ -261,7 +272,7 @@ async function main() {
     return out(data, opts);
   }
 
-  fail(`Unknown command '${group}'. Groups: configure, me, books, readings, recs, feedback, prefs, jobs, export`);
+  fail(`Unknown command '${group}'. Groups: configure, me, books, readings, recs, feedback, prefs, jobs, config, export, import`);
 }
 
 main().catch((e) => fail(e?.message || String(e)));

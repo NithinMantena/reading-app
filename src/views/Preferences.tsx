@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type ImportReport } from "../lib/api";
-import type { FeedbackEvent, IntegrationToken, Job, Settings } from "../lib/types";
+import type { FeedbackEvent, GenerationConfig, IntegrationToken, Job, Settings } from "../lib/types";
 import { fmtDateTime } from "../lib/format";
 import { useAuth } from "../auth/AuthProvider";
 import { useToast } from "../components/Toast";
@@ -113,14 +113,30 @@ export function Preferences() {
         </section>
 
         <section className="card">
+          <h2>Trusted sources</h2>
+          <p className="small muted">RSS or Atom feeds from publishers you trust. They join the free sources (OpenAlex, arXiv, Hacker News) and any search provider when retrieving candidates. Dates and access are still verified per item.</p>
+          <div className="stack">
+            {(draft.sources ?? []).map((s, i) => (
+              <div key={i} className="row">
+                <input type="url" value={s.url} placeholder="https://example.org/feed.xml" style={{ maxWidth: 420 }} aria-label="Feed URL" onChange={(e) => set("sources", (draft.sources ?? []).map((x, j) => (j === i ? { ...x, url: e.target.value } : x)))} />
+                <input type="text" value={s.label ?? ""} placeholder="Label" style={{ maxWidth: 200 }} aria-label="Label" onChange={(e) => set("sources", (draft.sources ?? []).map((x, j) => (j === i ? { ...x, label: e.target.value || undefined } : x)))} />
+                <button className="btn ghost sm" aria-label="Remove" onClick={() => set("sources", (draft.sources ?? []).filter((_, j) => j !== i))}>×</button>
+              </div>
+            ))}
+            <button className="btn sm" onClick={() => set("sources", [...(draft.sources ?? []), { url: "" }])}>+ Add feed</button>
+          </div>
+        </section>
+
+        <section className="card">
           <h2>Generation budget</h2>
           <div className="form-grid">
             <div className="field">
               <label htmlFor="p-cap">Monthly spending cap (USD)</label>
               <input id="p-cap" type="number" min={0} step={1} value={draft.budget.monthly_cap_usd} onChange={(e) => set("budget", { ...draft.budget, monthly_cap_usd: Number(e.target.value) })} />
-              <span className="hint">Generation stops when the cap is reached; the library and existing lists keep working. Model and search providers are configured server-side (Phase 2).</span>
+              <span className="hint">Generation stops when the cap is reached; the library and existing lists keep working. A cap of 0 keeps generation off.</span>
             </div>
           </div>
+          <GenerationSection />
         </section>
 
         <TokensSection />
@@ -129,6 +145,42 @@ export function Preferences() {
         <JobsSection />
       </div>
     </>
+  );
+}
+
+function GenerationSection() {
+  const [cfg, setCfg] = useState<GenerationConfig | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => { api.generation.config().then(setCfg).catch((e) => setErr(e instanceof Error ? e.message : String(e))); }, []);
+  if (err) return <p className="small" style={{ color: "var(--red)" }}>{err}</p>;
+  if (!cfg) return <p className="small muted">Loading generation configuration…</p>;
+  const price = (m: string) => {
+    const p = cfg.prices[m];
+    return p && typeof p === "object" ? `$${p.input}/M in · $${p.output}/M out` : "rate unknown";
+  };
+  return (
+    <div style={{ marginTop: "1rem" }}>
+      <h3>Services and rates</h3>
+      <div className="table-wrap">
+        <table>
+          <tbody>
+            <tr><th>Model provider</th><td>{cfg.provider ?? <Badge tone="red">Not configured (set ANTHROPIC_API_KEY)</Badge>}</td></tr>
+            <tr><th>Ranking model</th><td className="mono">{cfg.models.ranker} <span className="muted small">({price(cfg.models.ranker)})</span></td></tr>
+            <tr><th>Classifier model</th><td className="mono">{cfg.models.classifier} <span className="muted small">({price(cfg.models.classifier)})</span></td></tr>
+            <tr><th>Search</th><td>{cfg.search === "free-sources-only" ? "Free sources only" : cfg.search} <span className="muted small">· always: {cfg.freeSources.join(", ")}</span></td></tr>
+            <tr><th>Estimated cost per run</th><td className="small">{Object.entries(cfg.estimatePerRunUsd).map(([h, v]) => `${h} ~$${v.toFixed(2)}`).join(" · ")}</td></tr>
+            <tr><th>Spent this month</th><td>${cfg.monthlySpendUsd.toFixed(2)} of ${cfg.monthlyCapUsd.toFixed(2)} cap</td></tr>
+            <tr><th>Scheduler</th><td className="small">
+              {cfg.scheduler.error ? <span style={{ color: "var(--red)" }}>{cfg.scheduler.error}</span> : (cfg.scheduler.jobs ?? []).length === 0 ? "No cron jobs registered" : (cfg.scheduler.jobs ?? []).map((j) => (
+                <div key={j.name}><span className="mono">{j.name}</span> ({j.schedule}) {j.active ? "" : "inactive"}{j.lastRun ? ` · last ${j.lastRun.status} ${fmtDateTime(j.lastRun.started)}` : " · not run yet"}</div>
+              ))}
+              {cfg.scheduler.workerRegistered === false && <div className="muted">Worker URL not registered yet; it registers on the first generation.</div>}
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p className="hint" style={{ marginTop: "0.5rem" }}>Daily and weekly editions target 07:00 in your time zone; monthly on the 1st, yearly on January 1, decade on January 1, 2030. Costs shown are provider list prices; each run records its actual usage.</p>
+    </div>
   );
 }
 

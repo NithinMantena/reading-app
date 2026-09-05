@@ -38,6 +38,7 @@ export const LIBRARY_STATUS_LABEL: Record<LibraryStatus, string> = {
   reading: "Reading",
   finished: "Finished",
   stopped: "Stopped",
+  unknown: "Unknown",
 };
 
 export const QUEUE_STATUS_LABEL: Record<QueueStatus, string> = {

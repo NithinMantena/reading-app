@@ -22,6 +22,11 @@ enabled = true
 client_id = "env(GITHUB_OAUTH_CLIENT_ID)"
 secret = "env(GITHUB_OAUTH_CLIENT_SECRET)"
 
+# Both functions verify sessions and integration tokens themselves.
 [functions.api]
-# Custom integration tokens are verified inside the function.
 verify_jwt = false
+import_map = "./functions/import_map.json"
+
+[functions.worker]
+verify_jwt = false
+import_map = "./functions/import_map.json"

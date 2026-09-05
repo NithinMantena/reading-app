@@ -54,6 +54,9 @@ only when showing raw output to a person.
 | "Find alternatives for the yearly list." | `jobs create --kind alternatives --horizon yearly` → report the job id and that it runs within the configured budget |
 | "Is the job done?" | `jobs get <id>` |
 | "Export my reading data." | `export --out reading-export.json` |
+| "Import this file." | `import <file.json>` to preview, then `import <file.json> --commit` after confirming the counts |
+| "What is generation costing / is the scheduler running?" | `config` → provider, models, month-to-date spend vs cap, cron status |
+| "Compare models on the weekly shelf." | `jobs create --kind model_comparison --horizon weekly` → results in `jobs get <id>` under `checkpoint.comparison` |
 
 Feedback actions: `more_like_this`, `less_like_this`, `already_know`, `too_superficial`,
 `too_technical`, `too_long`, `wrong_topic`, `unreliable_source`, `cannot_access`, `note`,

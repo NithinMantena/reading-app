@@ -54,9 +54,21 @@ export function Discover() {
     setBusy(true);
     try {
       const res = await api.jobs.create({ kind, horizon });
-      toast.notify(res.jobs.some((j) => (j as { existing?: boolean }).existing) ? "A job for this period is already queued." : "Generation queued.");
+      toast.notify(res.jobs.some((j) => (j as { existing?: boolean }).existing) ? "A job for this period is already queued." : "Generation started.");
       res.warnings.forEach((w) => toast.notify(w));
       await load();
+      // Drive the worker from here so the shelf fills in now; cron would otherwise pick it up within a minute.
+      void (async () => {
+        for (let i = 0; i < 12; i++) {
+          try {
+            const r = await api.generation.step();
+            await load();
+            if (!r.processed.length || r.processed.every((p) => p.status === "succeeded" || p.status === "failed")) break;
+          } catch {
+            break;
+          }
+        }
+      })();
     } catch (e) {
       toast.fail(e);
     } finally {
@@ -105,7 +117,7 @@ export function Discover() {
       </div>
 
       {shelves === null ? <p className="muted">Loading…</p> : shelves.map((s) => <ShelfView key={s.horizon} shelf={s} busy={busy}
-        onGenerate={(kind) => void generate(kind, s.horizon)}
+        onGenerate={(kind) => void generate(kind === "initial" ? "alternatives" : kind, s.horizon)}
         onEntry={entryAction}
         onFeedback={(e) => { setFeedbackFor(e); setFbAction("more_like_this"); setFbScope("item"); setFbText(""); }} />)}
 
@@ -162,8 +174,9 @@ function ShelfView({ shelf, busy, onGenerate, onEntry, onFeedback }: {
           <span>{b ? `${active.length} of ${shelf.targetCount}` : `0 of ${TARGET_COUNTS[shelf.horizon]}`}</span>
           {b?.published_at && <span>Updated {fmtDateTime(b.published_at)}{b.version > 1 ? ` · v${b.version}` : ""}</span>}
           {shelf.activeJob && <Badge tone="blue">{shelf.activeJob.status === "running" ? `Generating: ${shelf.activeJob.stage}` : "Queued"}</Badge>}
-          {b?.status === "failed" && <Badge tone="red">Last run failed</Badge>}
+          {!shelf.activeJob && shelf.lastJob?.status === "failed" && <Badge tone="red" >Last run failed</Badge>}
           {b?.status === "partial" && <Badge tone="amber">Partial</Badge>}
+          {!b && !shelf.activeJob && <button className="btn sm ghost" disabled={busy} onClick={() => onGenerate("initial")}>Generate</button>}
           {b && <button className="btn sm ghost" disabled={busy || Boolean(shelf.activeJob)} onClick={() => onGenerate("alternatives")}>Find alternatives</button>}
           {b && active.length < shelf.targetCount && <button className="btn sm ghost" disabled={busy || Boolean(shelf.activeJob)} onClick={() => onGenerate("fill_missing")}>Fill missing slots</button>}
         </div>
@@ -171,8 +184,12 @@ function ShelfView({ shelf, busy, onGenerate, onEntry, onFeedback }: {
       <p className="small muted" style={{ marginTop: "-0.4rem" }}>{LENGTH_NOTE[shelf.horizon]}</p>
 
       {!b ? (
-        <Empty title={shelf.activeJob ? "Generation in progress" : "No edition for this period yet"}>
-          {shelf.activeJob ? "This shelf fills in when the job completes." : "Generation runs on the backend once a model provider and budget are configured (Phase 2)."}
+        <Empty title={shelf.activeJob ? "Generation in progress" : shelf.lastJob?.status === "failed" ? "Last run failed" : "No edition for this period yet"}>
+          {shelf.activeJob
+            ? `Stage: ${shelf.activeJob.stage}. This shelf fills in when the job completes.`
+            : shelf.lastJob?.status === "failed"
+              ? shelf.lastJob.error ?? "See Preferences → Generation runs for details."
+              : "Press Generate, or wait for the scheduled run at 07:00 local once a budget and model provider are configured."}
         </Empty>
       ) : active.length === 0 ? (
         <Empty title="No verified selections">{b.status_reason ?? "Fewer than the target passed the date and access checks."}</Empty>

@@ -5,7 +5,7 @@
 //      must match app_owner.github_login; anyone else gets 403.
 //   2. Integration tokens: "rap_..." bearer tokens created from the website for the
 //      OpenClaw bot. Only the SHA-256 hash is stored. Tokens carry scopes.
-import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { ApiError, sha256Hex } from "./http.ts";
 
 export type Scope = "read" | "library:write" | "feedback:write" | "preferences:write" | "generation" | "admin";

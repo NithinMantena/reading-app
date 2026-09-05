@@ -8,7 +8,9 @@
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && vite build && node scripts/postbuild.mjs",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.functions.json",
+    "typecheck:functions": "tsc --noEmit -p tsconfig.functions.json",
+    "seed": "node scripts/seed-from-sheet.mjs",
     "test": "vitest run",
     "bot": "node bot/reading.mjs"
   },
@@ -22,6 +24,7 @@
     "react-router-dom": "^6.28.0"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.110.0",
     "@types/node": "^26.4.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",

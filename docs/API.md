@@ -28,6 +28,8 @@ Scopes: `read`, `library:write`, `feedback:write`, `preferences:write`, `generat
   `idempotency_key_required`, `idempotency_key_reused`, `internal`.
 - **Dates.** Calendar dates are `YYYY-MM-DD` and may be `null` (unknown). Instants are ISO-8601 UTC.
 - **Ratings.** `0`–`10` inclusive, one decimal; `null` = unrated (distinct from `0`).
+- **Statuses.** Books: `want_to_read`, `reading`, `finished`, `stopped`, `unknown`. Sessions: `reading`, `finished`, `stopped`, `unknown`. `unknown` is for historical records whose completion is not known; nothing is inferred from a year heading or a rating.
+- **Provenance.** Imported records may carry `import_source` (workbook, worksheet, source ids, raw values). It is kept apart from the user's own notes.
 - **Lists.** `{ items, total, limit, offset }`; `limit` ≤ 500.
 - **Links.** Records include `app_link`, a canonical URL into the website.
 
@@ -71,8 +73,8 @@ Scopes: `read`, `library:write`, `feedback:write`, `preferences:write`, `generat
 | POST | `/feedback` | feedback:write | `action` (see below), `scope` (`item`,`topic`,`author`,`publisher`), `text`, `reading_id`, `book_id`, `recommendation_entry_id`, `quality_rating`. Topics and publisher are denormalised from the item. `source` is set from the principal (`website` or `openclaw`). |
 | PATCH | `/feedback/{id}` | feedback:write | `action`, `scope`, `text`, `quality_rating`, `version`. |
 | DELETE | `/feedback/{id}` | feedback:write | Soft delete; excluded from all future recommendation context. |
-| GET | `/preferences` | read | Time zone, language, interests, exclusions, length preferences, access exceptions, budget. |
-| PATCH | `/preferences` | preferences:write | Same fields, `version`. Time zone must be a valid IANA name. |
+| GET | `/preferences` | read | Time zone, language, interests, exclusions, length preferences, access exceptions, budget, trusted `sources` (RSS/Atom feeds). |
+| PATCH | `/preferences` | preferences:write | Same fields, `version`. Time zone must be a valid IANA name; `sources[].url` must be http(s). |
 | GET | `/preference-summary` | read | Explicit settings plus the latest derived summary with supporting feedback ids (Phase 3). |
 
 Feedback actions: `more_like_this`, `less_like_this`, `already_know`, `too_superficial`,
@@ -82,7 +84,8 @@ Feedback actions: `more_like_this`, `less_like_this`, `already_know`, `too_super
 
 | Method | Path | Scope | Notes |
 | --- | --- | --- | --- |
-| POST | `/recommendation-jobs` | generation | `kind` (`initial`, `alternatives`, `fill_missing`, `scheduled`), `horizon` (required except for `initial`). Returns `202 { jobs[], warnings[] }`. One active job per owner/horizon/period; duplicates return the existing job with `existing: true`. |
+| POST | `/recommendation-jobs` | generation | `kind` (`initial`, `alternatives`, `fill_missing`, `scheduled`, `model_comparison`), `horizon` (required except for `initial`). Returns `202 { jobs[], warnings[] }`. One active job per owner/horizon/period; duplicates return the existing job with `existing: true`. The worker starts within a minute (cron) or immediately when the website drives it. |
+| GET | `/generation-config` | read | Provider and models in use, list prices, search provider, per-run estimates, month-to-date spend vs cap, cron job status, trusted sources. Never returns keys. |
 | GET | `/jobs` | read | Newest first. |
 | GET | `/jobs/{id}` | read | `status`, `stage`, `attempts`, `cost`, `error`. |
 

@@ -115,7 +115,8 @@ export function BookDetail() {
           </div>
 
           <div className="row">
-            {book.library_status === "want_to_read" && <button className="btn primary" disabled={busy} onClick={() => void setStatus("reading", { started_on: todayLocal(settings?.time_zone) })}>Start reading</button>}
+            {(book.library_status === "want_to_read" || book.library_status === "unknown") && <button className="btn primary" disabled={busy} onClick={() => void setStatus("reading", { started_on: todayLocal(settings?.time_zone) })}>Start reading</button>}
+            {book.library_status === "unknown" && <button className="btn" disabled={busy} onClick={openFinish}>Mark finished</button>}
             {book.library_status === "reading" && <button className="btn primary" disabled={busy} onClick={openFinish}>Mark finished</button>}
             {book.library_status === "reading" && <button className="btn" disabled={busy} onClick={() => void setStatus("stopped")}>Stop</button>}
             {book.library_status === "stopped" && <button className="btn" disabled={busy} onClick={() => void setStatus("reading")}>Resume</button>}
@@ -155,6 +156,12 @@ export function BookDetail() {
               </ul>
             ) : (
               <p className="muted small">No reading sessions yet. Historical dates can be left blank; nothing is ever guessed.</p>
+            )}
+            {(book as Book & { import_source?: Record<string, unknown> }).import_source && (
+              <p className="small muted" style={{ marginTop: "0.5rem" }}>
+                Imported from {String((book as Book & { import_source?: { worksheet?: string } }).import_source?.worksheet ?? "a spreadsheet")}
+                {" "}(rows {((book as Book & { import_source?: { source_ids?: string[] } }).import_source?.source_ids ?? []).join(", ")}). Status “Unknown” means the sheet had no completion date.
+              </p>
             )}
           </div>
 
@@ -203,7 +210,7 @@ export function BookDetail() {
             <div className="field">
               <label htmlFor="se-status">Status</label>
               <select id="se-status" value={sessionEdit.status} onChange={(e) => setSessionEdit({ ...sessionEdit, status: e.target.value as SessionStatus })}>
-                <option value="reading">Reading</option><option value="finished">Finished</option><option value="stopped">Stopped</option>
+                <option value="reading">Reading</option><option value="finished">Finished</option><option value="stopped">Stopped</option><option value="unknown">Unknown</option>
               </select>
             </div>
             <div className="field">

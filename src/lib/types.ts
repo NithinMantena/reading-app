@@ -1,5 +1,5 @@
-export type LibraryStatus = "want_to_read" | "reading" | "finished" | "stopped";
-export type SessionStatus = "reading" | "finished" | "stopped";
+export type LibraryStatus = "want_to_read" | "reading" | "finished" | "stopped" | "unknown";
+export type SessionStatus = "reading" | "finished" | "stopped" | "unknown";
 export type QueueStatus = "candidate" | "saved" | "reading" | "finished" | "archived";
 export type AccessClass = "free_full_text" | "open_copy" | "nyt_subscription" | "preview_only" | "paywall" | "unknown";
 export type DatePrecision = "day" | "month" | "year" | "unknown";
@@ -84,8 +84,22 @@ export interface Settings {
   exclusions: { kind: "topic" | "author" | "publisher"; value: string }[];
   length_preferences: Record<string, number>;
   budget: { monthly_cap_usd: number; currency?: string };
+  sources: { url: string; label?: string }[];
   onboarding_complete: boolean;
   version: number;
+}
+
+export interface GenerationConfig {
+  provider: string | null;
+  models: { ranker: string; classifier: string; comparison: string };
+  prices: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number } | null | string>;
+  search: string;
+  freeSources: string[];
+  estimatePerRunUsd: Record<string, number>;
+  monthlySpendUsd: number;
+  monthlyCapUsd: number;
+  scheduler: { workerRegistered?: boolean; jobs?: { name: string; schedule: string; active: boolean; lastRun: { status: string; started: string; message: string } | null }[]; error?: string };
+  sources: { url: string; label?: string }[];
 }
 
 export interface RecommendationEntry {
@@ -124,6 +138,7 @@ export interface Shelf {
   batch: Batch | null;
   entries: RecommendationEntry[];
   activeJob: { id: string; status: string; stage: string; updated_at: string } | null;
+  lastJob: { id: string; status: string; stage: string; error: string | null; attempts: number; updated_at: string; created_at: string; kind: string } | null;
 }
 
 export interface Job {

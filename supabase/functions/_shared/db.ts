@@ -1,11 +1,11 @@
 // Small helpers around supabase-js results so handlers stay readable.
-import type { PostgrestError } from "npm:@supabase/supabase-js@2";
+import type { PostgrestError } from "@supabase/supabase-js";
 import { ApiError } from "./http.ts";
 
-export function must<T>(res: { data: T | null; error: PostgrestError | null }, what = "record"): T {
+export function must<T>(res: { data: T; error: PostgrestError | null }, what = "record"): NonNullable<T> {
   if (res.error) throw fromPgError(res.error);
   if (res.data === null || res.data === undefined) throw new ApiError(404, "not_found", `${what} not found`);
-  return res.data;
+  return res.data as NonNullable<T>;
 }
 
 export function fromPgError(e: PostgrestError): ApiError {

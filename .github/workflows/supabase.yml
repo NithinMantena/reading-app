@@ -1,10 +1,11 @@
 name: Deploy backend (Supabase)
 
-# Applies migrations and deploys the `api` Edge Function. Requires repository secrets:
+# Applies migrations and deploys the Edge Functions. Requires repository secrets:
 #   SUPABASE_ACCESS_TOKEN  (personal access token from supabase.com/dashboard/account/tokens)
 #   SUPABASE_PROJECT_REF   (the project's reference id)
 #   SUPABASE_DB_PASSWORD   (database password chosen at project creation)
-# Optional function secrets are set once with `supabase secrets set` (see docs/DEPLOY.md).
+# Optional provider secrets (forwarded to the functions only when present):
+#   ANTHROPIC_API_KEY, EXA_API_KEY, BRAVE_API_KEY, OPENALEX_MAILTO
 
 on:
   push:
@@ -55,8 +56,30 @@ jobs:
           supabase secrets set --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}" \
             APP_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}" \
             OWNER_GITHUB_LOGIN="${{ github.repository_owner }}"
-      - name: Deploy api function
+      - name: Forward provider secrets that are present
         if: steps.check.outputs.configured == 'true'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        run: supabase functions deploy api --no-verify-jwt --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}"
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+          OPENALEX_MAILTO: ${{ secrets.OPENALEX_MAILTO }}
+        run: |
+          args=()
+          [ -n "$ANTHROPIC_API_KEY" ] && args+=("ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
+          [ -n "$EXA_API_KEY" ] && args+=("EXA_API_KEY=$EXA_API_KEY")
+          [ -n "$BRAVE_API_KEY" ] && args+=("BRAVE_API_KEY=$BRAVE_API_KEY")
+          [ -n "$OPENALEX_MAILTO" ] && args+=("OPENALEX_MAILTO=$OPENALEX_MAILTO")
+          if [ ${#args[@]} -gt 0 ]; then
+            supabase secrets set --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}" "${args[@]}"
+            echo "Forwarded ${#args[@]} provider secret(s)."
+          else
+            echo "::notice::No provider secrets set; generation will report 'no model provider' until ANTHROPIC_API_KEY is added."
+          fi
+      - name: Deploy functions
+        if: steps.check.outputs.configured == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          supabase functions deploy api --no-verify-jwt --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}"
+          supabase functions deploy worker --no-verify-jwt --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}"

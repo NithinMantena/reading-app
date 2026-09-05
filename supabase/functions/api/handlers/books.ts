@@ -6,8 +6,8 @@ import {
   bad, isUuid, optBool, optDate, optEnum, optRating, optString, optStringArray, optVersion, reqString,
 } from "../../_shared/validate.ts";
 
-const LIBRARY_STATUSES = ["want_to_read", "reading", "finished", "stopped"] as const;
-const SESSION_STATUSES = ["reading", "finished", "stopped"] as const;
+const LIBRARY_STATUSES = ["want_to_read", "reading", "finished", "stopped", "unknown"] as const;
+const SESSION_STATUSES = ["reading", "finished", "stopped", "unknown"] as const;
 type LibraryStatus = (typeof LIBRARY_STATUSES)[number];
 
 function normTitle(s: string): string {
@@ -137,6 +137,17 @@ async function syncSessionForStatus(ctx: Ctx, bookId: string, status: LibrarySta
 
   if (status === "want_to_read") {
     if (latest && Object.keys(patch).length) await ctx.db.from("reading_sessions").update(patch).eq("id", latest.id);
+    return;
+  }
+  if (status === "unknown") {
+    // Historical record with unknown completion: never invent a session unless dates were given.
+    if (latest) {
+      const r = await ctx.db.from("reading_sessions").update({ status: "unknown", ...patch }).eq("id", latest.id);
+      if (r.error) throw fromPgError(r.error);
+    } else if (Object.keys(patch).length) {
+      const r = await ctx.db.from("reading_sessions").insert({ owner_id: ctx.ownerId, book_id: bookId, status: "unknown", ...patch });
+      if (r.error) throw fromPgError(r.error);
+    }
     return;
   }
   const sessionStatus = status as "reading" | "finished" | "stopped";
