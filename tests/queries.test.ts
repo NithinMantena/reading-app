@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterBooks, filterReadings } from "../src/lib/queries";
+import { filterBooks, filterReadings } from "../src/lib/filters";
 import type { Book, Reading } from "../src/lib/types";
 
 const book = (over: Partial<Book>): Book => ({
