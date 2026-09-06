@@ -1,31 +1,29 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../lib/api";
-import type { Book, RecommendationEntry, Shelf } from "../lib/types";
+import type { RecommendationEntry } from "../lib/types";
 import { authorsText, fmtDate, fmtMinutes, hostOf } from "../lib/format";
 import { useRealtime } from "../lib/useRealtime";
 import { useAuth } from "../auth/AuthProvider";
+import { useQuery } from "../lib/cache";
+import { filterBooks, queries } from "../lib/queries";
 import { AccessBadge, Badge, Empty } from "../components/ui";
 
 export function Home() {
   const { settings } = useAuth();
-  const [reading, setReading] = useState<Book[] | null>(null);
-  const [shelves, setShelves] = useState<Shelf[] | null>(null);
-  const [queueCount, setQueueCount] = useState<number | null>(null);
+  const books = useQuery(queries.books.key, queries.books.fetch);
+  const recs = useQuery(queries.recommendations.key, queries.recommendations.fetch);
+  const readings = useQuery(queries.readings.key, queries.readings.fetch);
 
-  const load = useCallback(async () => {
-    const [books, recs, queue] = await Promise.allSettled([
-      api.books.list({ status: "reading", sort: "updated", limit: 6 }),
-      api.recommendations.all(),
-      api.readings.list({ status: "saved", limit: 1 }),
-    ]);
-    if (books.status === "fulfilled") setReading(books.value.items);
-    if (recs.status === "fulfilled") setShelves(recs.value.shelves);
-    if (queue.status === "fulfilled") setQueueCount(queue.value.total);
-  }, []);
-  useEffect(() => { void load(); }, [load]);
+  const refresh = useCallback(() => { void books.refresh(); void recs.refresh(); void readings.refresh(); }, [books.refresh, recs.refresh, readings.refresh]);
   const tables = useMemo(() => ["books", "reading_sessions", "recommendation_batches", "reading_items"], []);
-  useRealtime(tables, load, 30000);
+  useRealtime(tables, refresh, 60000);
+
+  const reading = useMemo(
+    () => (books.data ? filterBooks(books.data.items, { status: "reading", sort: "updated", asc: false }).slice(0, 6) : null),
+    [books.data],
+  );
+  const shelves = recs.data?.shelves ?? null;
+  const queueCount = readings.data ? readings.data.items.filter((r) => r.queue_status === "saved").length : null;
 
   const daily = shelves?.find((s) => s.horizon === "daily");
   const dailyEntries = daily?.entries.filter((e) => e.state !== "dismissed") ?? [];

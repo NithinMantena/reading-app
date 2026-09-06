@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
-import type { Batch, Horizon, RecommendationEntry, Shelf } from "../lib/types";
+import type { Horizon, RecommendationEntry, Shelf } from "../lib/types";
 import { fmtDate, fmtDateTime, fmtMinutes, hostOf } from "../lib/format";
 import { useRealtime } from "../lib/useRealtime";
 import { useToast } from "../components/Toast";
+import { invalidate, mutate, useQuery } from "../lib/cache";
+import { queries } from "../lib/queries";
 import { AccessBadge, Badge, Empty, Modal } from "../components/ui";
 import { HORIZON_LABELS, TARGET_COUNTS } from "@shared/periods";
 
@@ -27,25 +29,21 @@ const FEEDBACK_ACTIONS: { id: string; label: string }[] = [
   { id: "cannot_access", label: "Cannot access" },
 ];
 
+type Shelves = { shelves: Shelf[] };
+
 export function Discover() {
   const toast = useToast();
-  const [shelves, setShelves] = useState<Shelf[] | null>(null);
   const [feedbackFor, setFeedbackFor] = useState<RecommendationEntry | null>(null);
   const [fbAction, setFbAction] = useState("more_like_this");
   const [fbScope, setFbScope] = useState("item");
   const [fbText, setFbText] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      setShelves((await api.recommendations.all()).shelves);
-    } catch (e) {
-      toast.fail(e);
-    }
-  }, [toast]);
-  useEffect(() => { void load(); }, [load]);
+  const { data, error, refresh } = useQuery(queries.recommendations.key, queries.recommendations.fetch);
+  useEffect(() => { if (error) toast.fail(error); }, [error, toast]);
+  const shelves = data?.shelves ?? null;
   const tables = useMemo(() => ["recommendation_batches", "generation_jobs"], []);
-  useRealtime(tables, load, 20000);
+  useRealtime(tables, refresh, 20000);
 
   const anyBatch = shelves?.some((s) => s.batch) ?? false;
   const anyJob = shelves?.some((s) => s.activeJob) ?? false;
@@ -56,18 +54,19 @@ export function Discover() {
       const res = await api.jobs.create({ kind, horizon });
       toast.notify(res.jobs.some((j) => (j as { existing?: boolean }).existing) ? "A job for this period is already queued." : "Generation started.");
       res.warnings.forEach((w) => toast.notify(w));
-      await load();
+      await refresh();
       // Drive the worker from here so the shelf fills in now; cron would otherwise pick it up within a minute.
       void (async () => {
         for (let i = 0; i < 12; i++) {
           try {
             const r = await api.generation.step();
-            await load();
+            await refresh();
             if (!r.processed.length || r.processed.every((p) => p.status === "succeeded" || p.status === "failed")) break;
           } catch {
             break;
           }
         }
+        invalidate("jobs", "readings");
       })();
     } catch (e) {
       toast.fail(e);
@@ -77,15 +76,17 @@ export function Discover() {
   };
 
   const entryAction = async (e: RecommendationEntry, state: string, done: string) => {
-    setBusy(true);
+    // Apply locally first so the card updates on click, then confirm with the server.
+    mutate<Shelves>(queries.recommendations.key, (cur) => ({
+      shelves: cur.shelves.map((s) => ({ ...s, entries: s.entries.map((x) => (x.id === e.id ? { ...x, state: state as RecommendationEntry["state"] } : x)) })),
+    }));
     try {
       await api.recommendations.patchEntry(e.id, state);
       toast.notify(done);
-      await load();
+      invalidate("readings");
     } catch (err) {
       toast.fail(err);
-    } finally {
-      setBusy(false);
+      await refresh();
     }
   };
 
@@ -97,6 +98,7 @@ export function Discover() {
       toast.notify("Feedback saved. It will shape the next search.");
       setFeedbackFor(null);
       setFbText("");
+      invalidate("feedback");
     } catch (e) {
       toast.fail(e);
     } finally {
@@ -156,13 +158,11 @@ function ShelfView({ shelf, busy, onGenerate, onEntry, onFeedback }: {
   onEntry: (e: RecommendationEntry, state: string, done: string) => Promise<void>;
   onFeedback: (e: RecommendationEntry) => void;
 }) {
-  const [archive, setArchive] = useState<Batch[] | null>(null);
+  const [showArchive, setShowArchive] = useState(false);
+  const archiveQ = queries.archive(shelf.horizon);
+  const archive = useQuery(showArchive ? archiveQ.key : null, archiveQ.fetch);
   const b = shelf.batch;
   const active = shelf.entries.filter((e) => e.state !== "dismissed");
-  const loadArchive = async () => {
-    if (archive) return;
-    try { setArchive((await api.recommendations.archive(shelf.horizon)).items); } catch { setArchive([]); }
-  };
   return (
     <section className="section">
       <div className="shelf-head">
@@ -202,11 +202,11 @@ function ShelfView({ shelf, busy, onGenerate, onEntry, onFeedback }: {
         </>
       )}
 
-      <details className="archive" style={{ marginTop: "0.75rem" }} onToggle={(ev) => { if ((ev.target as HTMLDetailsElement).open) void loadArchive(); }}>
+      <details className="archive" style={{ marginTop: "0.75rem" }} onToggle={(ev) => { if ((ev.target as HTMLDetailsElement).open) setShowArchive(true); }}>
         <summary>Archived editions</summary>
-        {archive === null ? <p className="small muted">Loading…</p> : archive.length === 0 ? <p className="small muted">No earlier editions.</p> : (
+        {!archive.data ? <p className="small muted">{archive.error ? "Could not load earlier editions." : "Loading…"}</p> : archive.data.items.length === 0 ? <p className="small muted">No earlier editions.</p> : (
           <ul className="timeline small">
-            {archive.map((a) => (
+            {archive.data.items.map((a) => (
               <li key={a.id}>
                 <span>{a.window_label}{a.version > 1 ? ` · v${a.version}` : ""}<span className="muted"> · {a.time_zone}</span></span>
                 <span className="muted">{a.status}{a.published_at ? ` · ${fmtDateTime(a.published_at)}` : ""}</span>

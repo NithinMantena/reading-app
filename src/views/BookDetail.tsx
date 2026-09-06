@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api";
-import type { Book, ReadingSession, SessionStatus } from "../lib/types";
+import type { Book, Paged, ReadingSession, SessionStatus } from "../lib/types";
 import { authorsText, fmtDate, fmtRating, todayLocal } from "../lib/format";
 import { useRealtime } from "../lib/useRealtime";
 import { useAuth } from "../auth/AuthProvider";
 import { useToast } from "../components/Toast";
+import { getCached, invalidate, useQuery } from "../lib/cache";
+import { queries } from "../lib/queries";
 import { Badge, Modal, RatingInput, StatusBadge } from "../components/ui";
 import { BookForm, fromBook, toPayload, type BookFormValues } from "../components/BookForm";
 
@@ -14,7 +16,6 @@ export function BookDetail() {
   const navigate = useNavigate();
   const toast = useToast();
   const { settings } = useAuth();
-  const [book, setBook] = useState<Book | null>(null);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<BookFormValues>(fromBook());
   const [finishing, setFinishing] = useState(false);
@@ -24,17 +25,23 @@ export function BookDetail() {
   const [sessionEdit, setSessionEdit] = useState<ReadingSession | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      setBook(await api.books.get(id));
-    } catch (e) {
-      toast.fail(e);
+  const detail = queries.book(id);
+  const { data: fetched, error, refresh } = useQuery(detail.key, detail.fetch);
+  useEffect(() => {
+    if (error) {
+      toast.fail(error);
       navigate("/library");
     }
-  }, [id, navigate, toast]);
-  useEffect(() => { void load(); }, [load]);
+  }, [error, navigate, toast]);
   const tables = useMemo(() => ["books", "reading_sessions"], []);
-  useRealtime(tables, load);
+  useRealtime(tables, refresh);
+
+  // While the full record (with sessions) loads, show the row we already have from the list.
+  const listed = useMemo(() => {
+    const find = (key: string) => getCached<Paged<Book>>(key)?.items.find((b) => b.id === id);
+    return find(queries.books.key) ?? find(queries.booksArchived.key) ?? null;
+  }, [id]);
+  const book = fetched ?? listed;
 
   if (!book) return <p className="muted">Loading…</p>;
   const latest = book.sessions?.[0] ?? null;
@@ -44,7 +51,8 @@ export function BookDetail() {
     try {
       await fn();
       if (done) toast.notify(done);
-      await load();
+      await refresh();
+      invalidate("books:all", "books:archived");
     } catch (e) {
       toast.fail(e);
     } finally {
@@ -83,8 +91,17 @@ export function BookDetail() {
 
   const permanentlyDelete = async () => {
     if (!window.confirm(`Permanently delete “${book.title}” and its reading history? Archive is reversible; this is not.`)) return;
-    await run(() => api.books.remove(book.id), "Deleted");
-    navigate("/library");
+    setBusy(true);
+    try {
+      await api.books.remove(book.id);
+      toast.notify("Deleted");
+      invalidate("books:all", "books:archived");
+      navigate("/library");
+    } catch (e) {
+      toast.fail(e);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (

@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../lib/api";
-import type { QueueStatus, Reading } from "../lib/types";
+import type { Paged, QueueStatus, Reading } from "../lib/types";
 import { fmtDate, fmtMinutes, hostOf } from "../lib/format";
 import { useRealtime } from "../lib/useRealtime";
 import { useToast } from "../components/Toast";
+import { invalidate, mutate, useQuery } from "../lib/cache";
+import { filterReadings, queries } from "../lib/queries";
 import { AccessBadge, Badge, ChipsInput, Empty, Modal, QueueBadge, RatingInput } from "../components/ui";
 
 type Tab = "active" | QueueStatus;
@@ -21,7 +23,6 @@ export function Queue() {
   const toast = useToast();
   const [tab, setTab] = useState<Tab>("active");
   const [q, setQ] = useState("");
-  const [items, setItems] = useState<Reading[] | null>(null);
   const [input, setInput] = useState("");
   const [inputNotes, setInputNotes] = useState("");
   const [adding, setAdding] = useState(false);
@@ -31,20 +32,15 @@ export function Queue() {
   const [rateText, setRateText] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const res = await api.readings.list({ q: q || undefined, status: tab === "active" ? undefined : tab, limit: 500 });
-      setItems(res.items);
-    } catch (e) {
-      toast.fail(e);
-    }
-  }, [q, tab, toast]);
-  useEffect(() => {
-    const t = window.setTimeout(() => void load(), q ? 250 : 0);
-    return () => window.clearTimeout(t);
-  }, [load, q]);
+  const { data, error, refresh } = useQuery(queries.readings.key, queries.readings.fetch);
+  useEffect(() => { if (error) toast.fail(error); }, [error, toast]);
   const tables = useMemo(() => ["reading_items"], []);
-  useRealtime(tables, load);
+  useRealtime(tables, refresh);
+
+  const items = useMemo(
+    () => (data ? filterReadings(data.items, { q, status: tab === "active" ? undefined : tab }) : null),
+    [data, q, tab],
+  );
 
   useEffect(() => {
     if (focusId && items) {
@@ -63,7 +59,9 @@ export function Queue() {
       toast.notify(res.existing ? "Already saved. Opening the existing item." : `Saved: ${res.title}`);
       setInput("");
       setInputNotes("");
-      await load();
+      mutate<Paged<Reading>>(queries.readings.key, (cur) =>
+        cur.items.some((r) => r.id === res.id) ? cur : { ...cur, items: [res, ...cur.items], total: cur.total + 1 });
+      invalidate("readings");
       if (res.existing) setEdit(res);
     } catch (e) {
       toast.fail(e);
@@ -74,12 +72,19 @@ export function Queue() {
 
   const patch = async (r: Reading, body: Record<string, unknown>, done?: string) => {
     setBusy(true);
+    // Show the change immediately; the server response replaces it a moment later.
+    const optimistic: Partial<Reading> = { ...body } as Partial<Reading>;
+    if (body.archived === true) optimistic.queue_status = "archived";
+    if (body.archived === false) optimistic.queue_status = "saved";
+    delete (optimistic as Record<string, unknown>).archived;
+    mutate<Paged<Reading>>(queries.readings.key, (cur) => ({ ...cur, items: cur.items.map((x) => (x.id === r.id ? { ...x, ...optimistic } : x)) }));
     try {
-      await api.readings.patch(r.id, { ...body, version: r.version });
+      const updated = await api.readings.patch(r.id, { ...body, version: r.version });
+      mutate<Paged<Reading>>(queries.readings.key, (cur) => ({ ...cur, items: cur.items.map((x) => (x.id === r.id ? { ...x, ...updated } : x)) }));
       if (done) toast.notify(done);
-      await load();
     } catch (e) {
       toast.fail(e);
+      invalidate("readings");
     } finally {
       setBusy(false);
     }
@@ -102,6 +107,7 @@ export function Queue() {
       await api.feedback.create({ reading_id: rateItem.id, action: "quality_rating", quality_rating: rating, text: rateText || undefined });
       toast.notify("Reading quality recorded");
       setRateItem(null);
+      invalidate("feedback");
     } catch (e) {
       toast.fail(e);
     } finally {

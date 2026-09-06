@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type ImportReport } from "../lib/api";
-import type { FeedbackEvent, GenerationConfig, IntegrationToken, Job, Settings } from "../lib/types";
+import type { IntegrationToken, Settings } from "../lib/types";
 import { fmtDateTime } from "../lib/format";
 import { useAuth } from "../auth/AuthProvider";
 import { useToast } from "../components/Toast";
 import { Badge, Modal } from "../components/ui";
 import { API_BASE } from "../lib/supabase";
+import { invalidate, useQuery } from "../lib/cache";
+import { queries } from "../lib/queries";
 
 export function Preferences() {
   const { settings, setSettings, refreshSettings } = useAuth();
@@ -149,10 +151,8 @@ export function Preferences() {
 }
 
 function GenerationSection() {
-  const [cfg, setCfg] = useState<GenerationConfig | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { api.generation.config().then(setCfg).catch((e) => setErr(e instanceof Error ? e.message : String(e))); }, []);
-  if (err) return <p className="small" style={{ color: "var(--red)" }}>{err}</p>;
+  const { data: cfg, error } = useQuery(queries.generationConfig.key, queries.generationConfig.fetch);
+  if (error && !cfg) return <p className="small" style={{ color: "var(--red)" }}>{error.message}</p>;
   if (!cfg) return <p className="small muted">Loading generation configuration…</p>;
   const price = (m: string) => {
     const p = cfg.prices[m];
@@ -186,21 +186,21 @@ function GenerationSection() {
 
 function TokensSection() {
   const toast = useToast();
-  const [items, setItems] = useState<IntegrationToken[]>([]);
+  const { data, error, refresh } = useQuery(queries.tokens.key, queries.tokens.fetch);
+  useEffect(() => { if (error) toast.fail(error); }, [error, toast]);
+  const items = data?.items ?? [];
   const [created, setCreated] = useState<IntegrationToken | null>(null);
   const [name, setName] = useState("OpenClaw");
-  const load = useCallback(async () => { try { setItems((await api.tokens.list()).items); } catch (e) { toast.fail(e); } }, [toast]);
-  useEffect(() => { void load(); }, [load]);
   const create = async () => {
     try {
       const t = await api.tokens.create({ name });
       setCreated(t);
-      await load();
+      await refresh();
     } catch (e) { toast.fail(e); }
   };
   const revoke = async (id: string) => {
     if (!window.confirm("Revoke this token? The bot will lose access immediately.")) return;
-    try { await api.tokens.revoke(id); toast.notify("Token revoked"); await load(); } catch (e) { toast.fail(e); }
+    try { await api.tokens.revoke(id); toast.notify("Token revoked"); await refresh(); } catch (e) { toast.fail(e); }
   };
   return (
     <section className="card">
@@ -310,18 +310,13 @@ function DataSection() {
 
 function FeedbackSection() {
   const toast = useToast();
-  const [items, setItems] = useState<FeedbackEvent[] | null>(null);
-  const [summary, setSummary] = useState<{ derived: unknown; activeFeedbackCount: number; note?: string } | null>(null);
-  const load = useCallback(async () => {
-    try {
-      const [f, s] = await Promise.all([api.feedback.list({}), api.preferences.summary()]);
-      setItems(f.items);
-      setSummary(s);
-    } catch (e) { toast.fail(e); }
-  }, [toast]);
-  useEffect(() => { void load(); }, [load]);
+  const list = useQuery(queries.feedback.key, queries.feedback.fetch);
+  const sum = useQuery(queries.feedbackSummary.key, queries.feedbackSummary.fetch);
+  useEffect(() => { if (list.error) toast.fail(list.error); }, [list.error, toast]);
+  const items = list.data?.items ?? null;
+  const summary = sum.data ?? null;
   const remove = async (id: string) => {
-    try { await api.feedback.remove(id); toast.notify("Feedback removed; it will be excluded from future recommendations."); await load(); } catch (e) { toast.fail(e); }
+    try { await api.feedback.remove(id); toast.notify("Feedback removed; it will be excluded from future recommendations."); invalidate("feedback"); } catch (e) { toast.fail(e); }
   };
   return (
     <section className="card">
@@ -352,8 +347,8 @@ function FeedbackSection() {
 }
 
 function JobsSection() {
-  const [jobs, setJobs] = useState<Job[] | null>(null);
-  useEffect(() => { api.jobs.list().then((r) => setJobs(r.items)).catch(() => setJobs([])); }, []);
+  const { data, error } = useQuery(queries.jobs.key, queries.jobs.fetch);
+  const jobs = data?.items ?? (error ? [] : null);
   return (
     <section className="card">
       <h2>Generation runs</h2>

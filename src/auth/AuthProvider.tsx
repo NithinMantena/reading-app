@@ -2,6 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import type { Session, User } from "@supabase/supabase-js";
 import { isConfigured, supabase } from "../lib/supabase";
 import { api, ApiClientError } from "../lib/api";
+import { clearCache } from "../lib/cache";
+import { prefetchAll } from "../lib/queries";
 import type { Settings } from "../lib/types";
 
 export type AuthStatus = "unconfigured" | "loading" | "signed_out" | "not_owner" | "ready";
@@ -37,6 +39,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!s) {
         setStatus("signed_out");
         setSettings(null);
+        clearCache();
       }
     });
     return () => sub.subscription.unsubscribe();
@@ -44,6 +47,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refreshSettings = useCallback(async () => {
     try {
+      // Start the main lists alongside the settings request so the first page is populated on arrival.
+      prefetchAll();
       const s = await api.preferences.get();
       setSettings(s);
       setStatus("ready");

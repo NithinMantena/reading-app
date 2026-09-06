@@ -29,12 +29,36 @@ export function serviceClient(): SupabaseClient {
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
+// The owner login changes only by migration, so one lookup per warm isolate is plenty.
+let ownerCache: { login: string; at: number } | null = null;
+const OWNER_TTL_MS = 10 * 60_000;
+
 async function ownerLogin(db: SupabaseClient): Promise<string> {
+  if (ownerCache && Date.now() - ownerCache.at < OWNER_TTL_MS) return ownerCache.login;
   const envLogin = Deno.env.get("OWNER_GITHUB_LOGIN");
   const { data } = await db.from("app_owner").select("github_login").eq("id", 1).maybeSingle();
   const login = data?.github_login ?? envLogin;
   if (!login) throw new ApiError(500, "owner_not_configured", "App owner is not configured");
+  ownerCache = { login, at: Date.now() };
   return login;
+}
+
+// Verified sessions, keyed by token hash. Verifying a session JWT costs a round trip to
+// the Auth server on every request; the browser sends the same token for up to an hour,
+// so remember the verdict for a few minutes (never past the token's own expiry).
+const sessionCache = new Map<string, { ownerId: string; until: number }>();
+const SESSION_TTL_MS = 5 * 60_000;
+const SESSION_CACHE_MAX = 200;
+
+function jwtExpiryMs(token: string): number | null {
+  try {
+    const payload = token.split(".")[1];
+    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+    const exp = (JSON.parse(json) as { exp?: number }).exp;
+    return typeof exp === "number" ? exp * 1000 : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function authenticate(req: Request, requestId: string): Promise<Ctx> {
@@ -70,28 +94,37 @@ export async function authenticate(req: Request, requestId: string): Promise<Ctx
   }
 
   // Supabase session JWT
-  const anon = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-  const { data, error } = await anon.auth.getUser(token);
-  if (error || !data.user) throw new ApiError(401, "invalid_session", "Session is invalid or expired");
-  const user = data.user;
-  const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
-  const login = String(meta.user_name ?? meta.preferred_username ?? "");
-  const expected = await ownerLogin(db);
-  if (!login || login.toLowerCase() !== expected.toLowerCase()) {
-    throw new ApiError(403, "not_owner", "This app is private to its owner");
-  }
-  // Remember the owner's user id the first time they sign in.
-  db.from("app_owner").update({ user_id: user.id }).eq("id", 1).is("user_id", null).then(() => {});
-  return {
-    ownerId: user.id,
+  const sessionCtx = (ownerId: string): Ctx => ({
+    ownerId,
     principal: "session",
     scopes: new Set(ALL_SCOPES),
     db,
     requestId,
     source: "website",
-  };
+  });
+  const hash = await sha256Hex(token);
+  const cached = sessionCache.get(hash);
+  if (cached && cached.until > Date.now()) return sessionCtx(cached.ownerId);
+  sessionCache.delete(hash);
+
+  const anon = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const [{ data, error }, expected] = await Promise.all([anon.auth.getUser(token), ownerLogin(db)]);
+  if (error || !data.user) throw new ApiError(401, "invalid_session", "Session is invalid or expired");
+  const user = data.user;
+  const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
+  const login = String(meta.user_name ?? meta.preferred_username ?? "");
+  if (!login || login.toLowerCase() !== expected.toLowerCase()) {
+    throw new ApiError(403, "not_owner", "This app is private to its owner");
+  }
+  // Remember the owner's user id the first time they sign in.
+  db.from("app_owner").update({ user_id: user.id }).eq("id", 1).is("user_id", null).then(() => {});
+
+  const exp = jwtExpiryMs(token) ?? Date.now() + SESSION_TTL_MS;
+  if (sessionCache.size >= SESSION_CACHE_MAX) sessionCache.delete(sessionCache.keys().next().value as string);
+  sessionCache.set(hash, { ownerId: user.id, until: Math.min(exp, Date.now() + SESSION_TTL_MS) });
+  return sessionCtx(user.id);
 }
 
 export function requireScope(ctx: Ctx, scope: Scope): void {

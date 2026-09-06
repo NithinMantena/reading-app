@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
-import type { Book, LibraryStatus } from "../lib/types";
+import type { LibraryStatus } from "../lib/types";
 import { authorsText, fmtDate, fmtRating, LIBRARY_STATUS_LABEL } from "../lib/format";
 import { useRealtime } from "../lib/useRealtime";
 import { useAuth } from "../auth/AuthProvider";
 import { useToast } from "../components/Toast";
+import { invalidate, useQuery } from "../lib/cache";
+import { filterBooks, queries } from "../lib/queries";
 import { Empty, Modal, StatusBadge } from "../components/ui";
 import { BookForm, fromBook, toPayload, type BookFormValues } from "../components/BookForm";
 
@@ -28,8 +30,6 @@ export function Library() {
   const [view, setView] = useState<"table" | "covers">(() => (localStorage.getItem("lib.view") as "table" | "covers") || "table");
   const [sort, setSort] = useState("updated");
   const [q, setQ] = useState("");
-  const [books, setBooks] = useState<Book[] | null>(null);
-  const [total, setTotal] = useState(0);
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState<BookFormValues>(fromBook());
   const [saving, setSaving] = useState(false);
@@ -37,29 +37,19 @@ export function Library() {
   useEffect(() => localStorage.setItem("lib.tab", tab), [tab]);
   useEffect(() => localStorage.setItem("lib.view", view), [view]);
 
-  const load = useCallback(async () => {
-    try {
-      const res = await api.books.list({
-        q: q || undefined,
-        status: tab !== "all" && tab !== "archived" ? tab : undefined,
-        archived: tab === "archived" ? true : undefined,
-        sort,
-        order: sort === "title" ? "asc" : "desc",
-        limit: 500,
-      });
-      setBooks(res.items);
-      setTotal(res.total);
-    } catch (e) {
-      toast.fail(e);
-    }
-  }, [q, tab, sort, toast]);
-
-  useEffect(() => {
-    const t = window.setTimeout(() => void load(), q ? 250 : 0);
-    return () => window.clearTimeout(t);
-  }, [load, q]);
+  // One list per archive state; tabs, search, and sort are applied locally so they are instant.
+  const source = tab === "archived" ? queries.booksArchived : queries.books;
+  const { data, error, refresh } = useQuery(source.key, source.fetch);
+  useEffect(() => { if (error) toast.fail(error); }, [error, toast]);
   const tables = useMemo(() => ["books", "reading_sessions"], []);
-  useRealtime(tables, load);
+  useRealtime(tables, refresh);
+
+  const books = useMemo(
+    () => (data ? filterBooks(data.items, { q, status: tab !== "all" && tab !== "archived" ? tab : undefined, sort, asc: sort === "title" }) : null),
+    [data, q, tab, sort],
+  );
+  const total = books?.length ?? 0;
+  const truncated = data ? data.total > data.items.length : false;
 
   const submit = async () => {
     if (!form.title.trim()) return toast.fail(new Error("Title is required"));
@@ -71,6 +61,7 @@ export function Library() {
       else toast.notify("Book added");
       setAdding(false);
       setForm(fromBook());
+      invalidate("books");
       navigate(`/library/${res.id}`);
     } catch (e) {
       toast.fail(e);
@@ -84,7 +75,7 @@ export function Library() {
       <div className="page-head">
         <div>
           <h1>Library</h1>
-          <p>{total} {total === 1 ? "book" : "books"}{tab !== "all" ? ` · ${TABS.find((t) => t.id === tab)?.label}` : ""}</p>
+          <p>{total} {total === 1 ? "book" : "books"}{tab !== "all" ? ` · ${TABS.find((t) => t.id === tab)?.label}` : ""}{truncated ? " · showing the most recent 500" : ""}</p>
         </div>
         <button className="btn primary" onClick={() => setAdding(true)}>+ Add book</button>
       </div>

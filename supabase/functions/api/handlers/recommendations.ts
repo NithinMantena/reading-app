@@ -18,15 +18,22 @@ export const get: Handler = async (ctx, _p, _b, url) => {
   const version = url.searchParams.get("version");
   const list = horizon ? [horizon] : HORIZONS;
   const now = new Date();
-  const shelves = [];
-  for (const h of list) {
+  // All shelves are independent, so resolve them concurrently: two round trips in total
+  // instead of three per shelf in sequence.
+  const shelves = await Promise.all(list.map(async (h) => {
     const w = windowFor(h as Horizon, now, settings.time_zone);
     const periodKey = period ?? w.periodKey;
     // Only published/partial editions are ever shown as "the" edition; failed runs stay in jobs.
     let q = ctx.db.from("recommendation_batches").select("*").eq("owner_id", ctx.ownerId).eq("horizon", h).eq("period_key", periodKey).in("status", ["published", "partial"]);
     q = version ? q.eq("version", Number(version)) : q.order("version", { ascending: false });
-    const { data: batch, error } = await q.limit(1).maybeSingle();
-    if (error) throw fromPgError(error);
+    const [batchRes, jobRes] = await Promise.all([
+      q.limit(1).maybeSingle(),
+      ctx.db
+        .from("generation_jobs").select("id, status, stage, error, attempts, updated_at, created_at, kind")
+        .eq("owner_id", ctx.ownerId).eq("horizon", h).eq("period_key", periodKey).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    ]);
+    if (batchRes.error) throw fromPgError(batchRes.error);
+    const batch = batchRes.data;
     let entries: unknown[] = [];
     if (batch) {
       const res = await ctx.db
@@ -37,11 +44,9 @@ export const get: Handler = async (ctx, _p, _b, url) => {
       if (res.error) throw fromPgError(res.error);
       entries = res.data ?? [];
     }
-    const { data: lastJob } = await ctx.db
-      .from("generation_jobs").select("id, status, stage, error, attempts, updated_at, created_at, kind")
-      .eq("owner_id", ctx.ownerId).eq("horizon", h).eq("period_key", periodKey).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    const lastJob = jobRes.data;
     const active = lastJob && (lastJob.status === "queued" || lastJob.status === "running") ? lastJob : null;
-    shelves.push({
+    return {
       horizon: h,
       isCurrent: periodKey === w.periodKey,
       window: { periodKey, label: period ? periodKey : w.label, start: w.startUtc.toISOString(), end: w.endUtc.toISOString(), timeZone: settings.time_zone },
@@ -50,8 +55,8 @@ export const get: Handler = async (ctx, _p, _b, url) => {
       entries,
       activeJob: active,
       lastJob: lastJob ?? null,
-    });
-  }
+    };
+  }));
   return { status: 200, body: horizon ? shelves[0] : { shelves } };
 };
 

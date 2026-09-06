@@ -84,13 +84,24 @@ usually simpler for a single-user app.
 
 ## Enabling generation (Phase 2)
 
-1. Add repository secrets (Settings → Secrets and variables → Actions):
+1. Add repository secrets (Settings → Secrets and variables → Actions), or from a terminal with
+   the GitHub CLI, which prompts for the value so it never lands in shell history:
+
+   ```bash
+   gh secret set ANTHROPIC_API_KEY --repo NithinMantena/reading-app
+   ```
+
    - `ANTHROPIC_API_KEY` (required) from https://console.anthropic.com/settings/keys
    - `EXA_API_KEY` (recommended for daily/weekly quality) from https://dashboard.exa.ai
    - `BRAVE_API_KEY` (optional alternative), `OPENALEX_MAILTO` (optional, your email for polite-pool access)
-2. Run the **Deploy backend (Supabase)** workflow. It forwards whichever of those are present to
-   the functions and deploys both `api` and `worker`. The migration also enables `pg_cron` and
-   `pg_net` and schedules the dispatcher and worker ticks.
+2. Run the **Deploy backend (Supabase)** workflow (Actions tab → *Deploy backend (Supabase)* →
+   *Run workflow*, or `gh workflow run supabase.yml`). It forwards whichever of those secrets are
+   present to the functions and deploys both `api` and `worker`. The migration also enables
+   `pg_cron` and `pg_net` and schedules the dispatcher and worker ticks. Adding a secret alone
+   does nothing until this workflow runs.
+
+   Alternative without GitHub: `npx supabase secrets set ANTHROPIC_API_KEY=sk-ant-...` after
+   `npx supabase link`. Functions pick up new secrets on their next invocation.
 3. In the app, Preferences → Generation budget: set a monthly cap above 0 and check the
    Services and rates table shows the provider and the two cron jobs.
 4. Discover → Generate first editions. Progress shows per shelf; details in Preferences → Generation runs.
