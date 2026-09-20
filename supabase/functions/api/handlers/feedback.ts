@@ -26,7 +26,7 @@ export const create: Handler = async (ctx, _p, body) => {
   if (!action) bad("action", "is required");
   const scope = optEnum(body.scope, "scope", SCOPES) ?? "item";
   const text = optString(body.text, "text", 5000) ?? null;
-  const readingId = optString(body.reading_id, "reading_id", 40) ?? null;
+  let readingId = optString(body.reading_id, "reading_id", 40) ?? null;
   const bookId = optString(body.book_id, "book_id", 40) ?? null;
   const entryId = optString(body.recommendation_entry_id, "recommendation_entry_id", 40) ?? null;
   const rating = optRating(body.quality_rating, "quality_rating") ?? null;
@@ -34,6 +34,13 @@ export const create: Handler = async (ctx, _p, body) => {
   if (!readingId && !bookId && !entryId && !text) bad("reading_id", "feedback needs a target item or free text");
   for (const [k, v] of [["reading_id", readingId], ["book_id", bookId], ["recommendation_entry_id", entryId]] as const) {
     if (v && !isUuid(v)) bad(k, "must be a UUID");
+  }
+
+  if (entryId) {
+    const entry = must(await ctx.db.from("recommendation_entries").select("reading_id")
+      .eq("owner_id", ctx.ownerId).eq("id", entryId).maybeSingle(), "Recommendation entry");
+    if (bookId || (readingId && readingId !== entry.reading_id)) bad("recommendation_entry_id", "must refer to the same reading as the feedback");
+    readingId = entry.reading_id;
   }
 
   // Denormalise topics/publisher from the item so the event stays useful if the item changes.

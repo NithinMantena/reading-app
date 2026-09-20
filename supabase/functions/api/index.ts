@@ -88,6 +88,7 @@ route("DELETE", "/v1/readings/:id", "admin", readings.remove);
 
 route("GET", "/v1/recommendations", "read", recommendations.get);
 route("GET", "/v1/recommendations/archive", "read", recommendations.archive);
+route("GET", "/v1/recommendation-entries/:id", "read", recommendations.getEntry);
 route("PATCH", "/v1/recommendation-entries/:id", "library:write", recommendations.patchEntry);
 
 route("GET", "/v1/feedback", "read", feedback.list);
@@ -97,6 +98,8 @@ route("DELETE", "/v1/feedback/:id", "feedback:write", feedback.remove);
 
 route("GET", "/v1/preferences", "read", preferences.get);
 route("PATCH", "/v1/preferences", "preferences:write", preferences.patch);
+route("POST", "/v1/preferences/interests", "preferences:write", preferences.upsertInterest, { idempotent: true });
+route("DELETE", "/v1/preferences/interests/:topic", "preferences:write", preferences.removeInterest);
 route("GET", "/v1/preference-summary", "read", preferences.summary);
 
 route("POST", "/v1/recommendation-jobs", "generation", jobs.create, { idempotent: true });

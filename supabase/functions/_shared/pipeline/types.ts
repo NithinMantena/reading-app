@@ -124,6 +124,7 @@ export interface CostLedger {
 }
 
 export interface Checkpoint {
+  sourceBatchId?: string;
   window: { start: string; end: string; label: string; timeZone: string; periodKey: string };
   context?: RankingContext;
   queries?: { core: string[]; exploration: string[] };

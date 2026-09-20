@@ -3,7 +3,8 @@ import type { Ctx } from "../../_shared/auth.ts";
 import { ApiError } from "../../_shared/http.ts";
 import { must, fromPgError } from "../../_shared/db.ts";
 import { isValidTimeZone } from "../../_shared/periods.ts";
-import { bad, optBool, optString, optVersion } from "../../_shared/validate.ts";
+import { bad, optBool, optString, optVersion, reqString } from "../../_shared/validate.ts";
+import { parseInterest, parseInterests, topicKey, type Interest } from "../../_shared/interests.ts";
 
 export interface Settings {
   owner_id: string;
@@ -23,7 +24,8 @@ export interface Settings {
 
 /** Load settings, creating the default row on first use. */
 export async function loadSettings(ctx: Ctx): Promise<Settings> {
-  const { data } = await ctx.db.from("user_settings").select("*").eq("owner_id", ctx.ownerId).maybeSingle();
+  const { data, error } = await ctx.db.from("user_settings").select("*").eq("owner_id", ctx.ownerId).maybeSingle();
+  if (error) throw fromPgError(error);
   if (data) return data as Settings;
   const inserted = await ctx.db.from("user_settings").insert({ owner_id: ctx.ownerId }).select("*").single();
   if (inserted.error && inserted.error.code === "23505") {
@@ -50,16 +52,7 @@ export const patch: Handler = async (ctx, _p, body) => {
   if (lang !== undefined) update.language = lang ?? "en";
 
   if (body.interests !== undefined) {
-    if (!Array.isArray(body.interests)) bad("interests", "must be an array");
-    update.interests = (body.interests as unknown[]).map((it, i) => {
-      if (typeof it === "string") return { topic: it.trim(), weight: 1 };
-      const o = it as Record<string, unknown>;
-      const topic = optString(o.topic, `interests[${i}].topic`, 100);
-      if (!topic) bad(`interests[${i}].topic`, "is required");
-      const weight = o.weight === undefined ? 1 : Number(o.weight);
-      if (Number.isNaN(weight) || weight < 0 || weight > 3) bad(`interests[${i}].weight`, "must be between 0 and 3");
-      return { topic, weight };
-    });
+    update.interests = parseInterests(body.interests);
   }
   if (body.exclusions !== undefined) {
     if (!Array.isArray(body.exclusions)) bad("exclusions", "must be an array");
@@ -119,6 +112,42 @@ export const patch: Handler = async (ctx, _p, body) => {
   if (res.error) throw fromPgError(res.error);
   if (!res.data) throw new ApiError(409, "version_conflict", "Settings were modified elsewhere; reload and retry", { current: current.version });
   return { status: 200, body: res.data };
+};
+
+// Compare-and-swap protects the rest of the list when a bot and browser edit together.
+async function changeInterests(ctx: Ctx, version: number | undefined, change: (items: Interest[]) => Interest[]) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const current = await loadSettings(ctx);
+    if (version !== undefined && version !== current.version) {
+      throw new ApiError(409, "version_conflict", "Settings were modified elsewhere; reload and retry");
+    }
+    const interests = change(current.interests);
+    if (JSON.stringify(interests) === JSON.stringify(current.interests)) return { status: 200, body: current };
+    const result = await ctx.db.from("user_settings").update({ interests })
+      .eq("owner_id", ctx.ownerId).eq("version", current.version).select("*").maybeSingle();
+    if (result.error) throw fromPgError(result.error);
+    if (result.data) return { status: 200, body: result.data };
+    if (version !== undefined) break;
+  }
+  throw new ApiError(409, "version_conflict", "Settings changed during the interest update; retry with fresh settings");
+}
+
+/** Add a topic, or update its weight, without replacing unrelated interests. */
+export const upsertInterest: Handler = async (ctx, _p, body) => {
+  const interest = parseInterest(body);
+  return changeInterests(ctx, optVersion(body.version), (items) => {
+    const existing = items.find((item) => topicKey(item.topic) === topicKey(interest.topic));
+    if (!existing) return [...items, interest];
+    return items.map((item) => topicKey(item.topic) === topicKey(interest.topic)
+      ? { ...item, weight: body.weight === undefined ? item.weight : interest.weight } : item);
+  });
+};
+
+/** DELETE /preferences/interests/{topic}?version=... (topic is URL-encoded). */
+export const removeInterest: Handler = async (ctx, p, _body, url) => {
+  const topic = reqString(p.topic, "topic", 100);
+  return changeInterests(ctx, optVersion(url.searchParams.get("version")),
+    (items) => items.filter((item) => topicKey(item.topic) !== topicKey(topic)));
 };
 
 export const summary: Handler = async (ctx) => {

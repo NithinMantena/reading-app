@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Horizon } from "../periods.ts";
 import type { RankingContext } from "./types.ts";
 
-export async function loadContext(db: SupabaseClient, ownerId: string, horizon: Horizon, periodKey: string, kind: string): Promise<RankingContext> {
+export async function loadContext(db: SupabaseClient, ownerId: string, horizon: Horizon, periodKey: string, kind: string, sourceBatchId?: string): Promise<RankingContext> {
   const [{ data: settings }, { data: feedback }, { data: summary }, { data: books }, { data: known }, { data: surfaced }] = await Promise.all([
     db.from("user_settings").select("*").eq("owner_id", ownerId).maybeSingle(),
     db.from("feedback_events").select("action, scope, text, topics, publisher, created_at, reading_id").eq("owner_id", ownerId).is("deleted_at", null)
@@ -63,7 +63,7 @@ export async function loadContext(db: SupabaseClient, ownerId: string, horizon: 
     const urls = (entries ?? []).map((e) => (e as unknown as { reading: { canonical_url: string | null } }).reading?.canonical_url).filter((u): u is string => Boolean(u));
     ctx.surfacedSameHorizon = [...new Set([...ctx.surfacedSameHorizon, ...urls])];
     if (kind === "fill_missing") {
-      const latest = batches[0].id;
+      const latest = sourceBatchId ?? batches[0].id;
       ctx.keepEntries = (entries ?? []).filter((e) => e.batch_id === latest).map((e) => ({
         reading_id: e.reading_id, slot: e.slot, is_surprise: e.is_surprise, why_matters: e.why_matters, why_fits: e.why_fits,
         evidence_depth: e.evidence_depth, ranking_evidence: e.ranking_evidence, previously_suggested: e.previously_suggested,

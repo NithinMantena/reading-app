@@ -2,7 +2,7 @@ import type { Handler } from "../index.ts";
 import { ApiError } from "../../_shared/http.ts";
 import { fromPgError, must, pageParams } from "../../_shared/db.ts";
 import { HORIZONS, windowFor, type Horizon } from "../../_shared/periods.ts";
-import { isUuid, optEnum } from "../../_shared/validate.ts";
+import { bad, isUuid, optEnum, optString } from "../../_shared/validate.ts";
 import { loadSettings } from "./preferences.ts";
 
 const KINDS = ["initial", "alternatives", "fill_missing", "scheduled", "model_comparison"] as const;
@@ -15,7 +15,17 @@ const KINDS = ["initial", "alternatives", "fill_missing", "scheduled", "model_co
 export const create: Handler = async (ctx, _p, body) => {
   const settings = await loadSettings(ctx);
   const kind = optEnum(body.kind, "kind", KINDS) ?? "initial";
-  const horizon = optEnum(body.horizon, "horizon", HORIZONS);
+  let horizon = optEnum(body.horizon, "horizon", HORIZONS);
+  const batchId = optString(body.batch_id, "batch_id", 40);
+  let batch: { id: string; horizon: Horizon; period_key: string; window_start: string; window_end: string; window_label: string; time_zone: string } | null = null;
+  if (body.batch_id !== undefined) {
+    if (!batchId || !isUuid(batchId)) bad("batch_id", "must be a UUID");
+    if (kind !== "alternatives" && kind !== "fill_missing") bad("batch_id", "is only supported for alternatives or fill_missing");
+    batch = must(await ctx.db.from("recommendation_batches").select("*").eq("owner_id", ctx.ownerId)
+      .eq("id", batchId).in("status", ["published", "partial"]).maybeSingle(), "Published edition");
+    if (horizon && horizon !== batch.horizon) bad("horizon", "must match the selected edition");
+    horizon = batch.horizon;
+  }
   if (kind !== "initial" && !horizon) throw new ApiError(422, "validation_failed", "horizon is required for this job kind");
   const list = horizon ? [horizon] : HORIZONS;
 
@@ -24,17 +34,20 @@ export const create: Handler = async (ctx, _p, body) => {
   const jobs = [];
   for (const h of list) {
     const w = windowFor(h as Horizon, new Date(), settings.time_zone);
+    const window = batch
+      ? { start: batch.window_start, end: batch.window_end, label: batch.window_label, timeZone: batch.time_zone, periodKey: batch.period_key }
+      : { start: w.startUtc.toISOString(), end: w.endUtc.toISOString(), label: w.label, timeZone: settings.time_zone, periodKey: w.periodKey };
     const row = {
-      owner_id: ctx.ownerId, kind, horizon: h, period_key: w.periodKey, status: "queued", stage: "queued",
+      owner_id: ctx.ownerId, kind, horizon: h, period_key: window.periodKey, status: "queued", stage: "queued",
       requested_by: ctx.source, preference_version: null,
       checkpoint: {
-        window: { start: w.startUtc.toISOString(), end: w.endUtc.toISOString(), label: w.label, timeZone: settings.time_zone, periodKey: w.periodKey },
+        window, sourceBatchId: batch?.id,
         log: [], cost: { estimatedUsd: 0, actualUsd: 0, calls: [], fetches: 0, searches: 0 },
       },
     };
     const ins = await ctx.db.from("generation_jobs").insert(row).select("*").single();
     if (ins.error?.code === "23505") {
-      const existing = await ctx.db.from("generation_jobs").select("*").eq("owner_id", ctx.ownerId).eq("horizon", h).eq("period_key", w.periodKey).in("status", ["queued", "running"]).single();
+      const existing = await ctx.db.from("generation_jobs").select("*").eq("owner_id", ctx.ownerId).eq("horizon", h).eq("period_key", window.periodKey).in("status", ["queued", "running"]).single();
       jobs.push({ ...must(existing), existing: true });
       continue;
     }

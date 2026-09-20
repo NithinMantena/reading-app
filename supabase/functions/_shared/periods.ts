@@ -209,6 +209,18 @@ export function allWindows(now: Date, timeZone: string): Record<Horizon, PeriodW
   return Object.fromEntries(HORIZONS.map((h) => [h, windowFor(h, now, timeZone)])) as Record<Horizon, PeriodWindow>;
 }
 
+/** Restore an edition's original bounds, including its original time zone. */
+export function windowFromStored(horizon: Horizon, stored: { start: string; end: string; timeZone: string; periodKey: string; label: string }): PeriodWindow {
+  const startUtc = new Date(stored.start);
+  const endUtc = new Date(stored.end);
+  return {
+    horizon, timeZone: stored.timeZone, periodKey: stored.periodKey, label: stored.label,
+    startUtc, endUtc,
+    startDate: localDateOf(startUtc, stored.timeZone),
+    endDate: localDateOf(endUtc, stored.timeZone),
+  };
+}
+
 export type DatePrecision = "day" | "month" | "year" | "unknown";
 
 export function compareLocal(a: LocalDate, b: LocalDate): number {

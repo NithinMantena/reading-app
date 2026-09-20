@@ -1,6 +1,6 @@
 // Stage 3/4: verify each candidate's identity, publication date, and access, and gather
 // the content evidence the ranker is allowed to see. Resumable via checkpoint.cursor.
-import { parseLocalDate, publicationFits, windowFor, type Horizon, type PeriodWindow } from "../periods.ts";
+import { parseLocalDate, publicationFits, windowFromStored, type Horizon } from "../periods.ts";
 import { isNytUrl } from "../urls.ts";
 import { extractMainText, fetchDocument, parseDateEvidence, parseMetadata, paywallMarkers, wordCount } from "../extract.ts";
 import type { Candidate, Checkpoint, RunConfig } from "./types.ts";
@@ -12,16 +12,6 @@ const PAYWALL_HOSTS = ["wsj.com", "ft.com", "bloomberg.com", "economist.com", "b
 function hostIn(url: string, list: string[]): boolean {
   const h = new URL(url).hostname.replace(/^www\./, "");
   return list.some((d) => h === d || h.endsWith(`.${d}`));
-}
-
-function windowOf(cp: Checkpoint, horizon: Horizon): PeriodWindow {
-  // Rebuild the window object from the checkpoint (deterministic).
-  const w = windowFor(horizon, new Date(cp.window.start), cp.window.timeZone);
-  // The checkpoint's window is authoritative if the job was queued for a specific past period.
-  if (w.startUtc.toISOString() !== cp.window.start) {
-    return { ...w, startUtc: new Date(cp.window.start), endUtc: new Date(cp.window.end), startDate: parseLocalDate(cp.window.start.slice(0, 10)), endDate: parseLocalDate(cp.window.end.slice(0, 10)), periodKey: cp.window.periodKey, label: cp.window.label };
-  }
-  return w;
 }
 
 /** Choose the best-supported publication date. Sources disagreeing beyond their precision => ambiguous. */
@@ -65,7 +55,7 @@ function resolveDate(c: Candidate, pageRaw: string | undefined, crossref: { date
 export async function validateBatch(cp: Checkpoint, horizon: Horizon, cfg: RunConfig, deadline: number, log: (s: string) => void): Promise<boolean> {
   const cands = cp.candidates ?? [];
   const ctx = cp.context!;
-  const w = windowOf(cp, horizon);
+  const w = windowFromStored(horizon, cp.window);
   const nytOk = ctx.accessExceptions.includes("nyt_subscription");
   let i = cp.cursor ?? 0;
   const excludedPublishers = ctx.exclusions.filter((e) => e.kind === "publisher").map((e) => e.value.toLowerCase());

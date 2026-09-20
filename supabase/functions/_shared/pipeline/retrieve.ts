@@ -1,5 +1,5 @@
 // Stage 2: gather candidates from search APIs, feeds, and scholarly sources.
-import type { Horizon } from "../periods.ts";
+import { addDays, formatLocalDate, windowFromStored, type Horizon } from "../periods.ts";
 import { isNytUrl } from "../urls.ts";
 import type { Candidate, Checkpoint, RunConfig } from "./types.ts";
 import type { ModelAdapter } from "./model.ts";
@@ -19,8 +19,8 @@ function hostBlocked(url: string): boolean {
 export async function retrieve(cp: Checkpoint, horizon: Horizon, cfg: RunConfig, adapter: ModelAdapter | null, log: (s: string) => void): Promise<Candidate[]> {
   const ctx = cp.context!;
   const plan = sourcePlan(horizon);
-  const endInclusive = new Date(new Date(cp.window.end).getTime() - 86400000).toISOString().slice(0, 10);
-  const w: WindowIso = { start: cp.window.start, end: cp.window.end, startDate: cp.window.start.slice(0, 10), endDateInclusive: endInclusive };
+  const period = windowFromStored(horizon, cp.window);
+  const w: WindowIso = { start: cp.window.start, end: cp.window.end, startDate: formatLocalDate(period.startDate), endDateInclusive: formatLocalDate(addDays(period.endDate, -1)) };
 
   // Queries: model-generated when available, otherwise straight from interests.
   let queries = cp.queries;

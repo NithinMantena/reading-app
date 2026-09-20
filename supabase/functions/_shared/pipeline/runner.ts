@@ -70,7 +70,8 @@ export async function runJob(db: SupabaseClient, job: JobRow, cfg: RunConfig): P
       switch (stage) {
         case "context": {
           if (!adapter) throw new Error("No model provider configured (set ANTHROPIC_API_KEY). Job cannot run.");
-          const ctx = await loadContext(db, job.owner_id, horizon, job.period_key, job.kind);
+          const ctx = await loadContext(db, job.owner_id, horizon, job.period_key, job.kind, cp.sourceBatchId);
+          ctx.timeZone = cp.window.timeZone;
           cp.context = ctx;
           const { data: settings } = await db.from("user_settings").select("budget").eq("owner_id", job.owner_id).single();
           const cap = Number((settings?.budget as { monthly_cap_usd?: number })?.monthly_cap_usd ?? 0);

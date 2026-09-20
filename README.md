@@ -54,6 +54,7 @@ npm test
 
 - [Deployment](docs/DEPLOY.md) — Supabase project, GitHub OAuth, Actions variables, Pages
 - [API v1](docs/API.md) — endpoints, auth, idempotency, versioning
+- [Claude MCP integration](docs/MCP.md) — tool-to-endpoint mapping and workflows for your own MCP server
 - [Generation](docs/GENERATION.md) — the discovery pipeline, scheduling, configuration, cost
 - [OpenClaw](docs/OPENCLAW.md) — install the skill and configure the bot token
 
