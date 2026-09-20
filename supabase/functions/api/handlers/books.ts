@@ -85,13 +85,13 @@ function bookFields(body: Record<string, unknown>, creating: boolean): Record<st
 
 function sessionFields(body: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  const s = optDate(body.started_on ?? body.start_date, "started_on");
+  const s = optDate(body.started_on !== undefined ? body.started_on : body.start_date, "started_on");
   if (s !== undefined) out.started_on = s;
-  const f = optDate(body.finished_on ?? body.finish_date, "finished_on");
+  const f = optDate(body.finished_on !== undefined ? body.finished_on : body.finish_date, "finished_on");
   if (f !== undefined) out.finished_on = f;
   const r = optRating(body.rating);
   if (r !== undefined) out.rating = r;
-  const n = optString(body.session_notes ?? body.what_stayed, "session_notes", 20000);
+  const n = optString(body.session_notes !== undefined ? body.session_notes : body.what_stayed, "session_notes", 20000);
   if (n !== undefined) out.notes = n;
   const st = optEnum(body.session_status, "session_status", SESSION_STATUSES);
   if (st !== undefined) out.status = st;

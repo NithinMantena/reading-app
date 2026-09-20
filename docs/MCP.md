@@ -1,12 +1,149 @@
-# Building a Claude MCP client for Reading
+# Reading MCP for Docker, Claude and Codex
 
-The app already has a hosted HTTP API. Your MCP server can expose focused tools to Claude and
-translate each tool call into an API request. Both the website and MCP client then use the same
-database and business rules. You do not need a direct database connection or a separate library.
+The repository ships a working MCP server in [`mcp/`](../mcp). It exposes **30 tools** for
+discovery, your article queue, interests, books, reading sessions, feedback and generation.
+It can run inside Docker MCP Toolkit's shared profile or directly as a local Node process.
 
-This is a guide to building your own MCP server; the repository does not currently ship an MCP
-protocol server. The existing `bot/reading.mjs` CLI is another API client and can serve as a
-reference for request handling. The full contract is in [API.md](API.md).
+```mermaid
+flowchart LR
+    Claude[Claude Desktop] --> Gateway[Docker MCP gateway]
+    Codex[Codex] --> Gateway
+    Gateway --> MCP[Reading MCP container]
+    MCP -->|HTTPS + scoped token| API[Reading API on Supabase]
+    Website[Reading website] --> API
+    API --> DB[(Same private database)]
+    API --> Jobs[Generation jobs and worker]
+```
+
+The MCP server translates structured tool calls into API requests. It does not maintain a
+second library or connect directly to Postgres. Saving an article in Claude updates the same
+records you see on the website. The gateway starts the local container when needed and connects
+over standard input/output; no public MCP port, domain or hosting service is needed.
+
+## Setup on this computer
+
+The local image `reading-app-mcp:local` is installed in the existing Docker MCP profile
+`nithin_mantena`. Claude Desktop and Codex already point to that profile. Other profile servers
+are preserved. The installation is staged until you provide a Reading integration token.
+
+1. Open [Reading Preferences](https://nithinmantena.github.io/reading-app/preferences) and sign in.
+2. Under **OpenClaw integration**, name a new token **Docker MCP** and click **Create token**.
+   The section serves MCP too; its default scopes cover the tools below. Copy the displayed token.
+3. Open PowerShell and run:
+
+   ```powershell
+   Set-Location 'C:\Users\nithi\.openclaw\workspace\obsidian\Apps\Book List\reading-app\mcp'
+   node setup.mjs --token-only
+   ```
+
+4. Paste the token at the hidden prompt and press Enter. Nothing appears while typing/pasting.
+   The script checks `/me`, stores it in Docker's native credential store, and updates the server
+   entry in the shared profile. Do not put the token into a chat or command-line argument.
+5. Run `node check.mjs --profile nithin_mantena`. A successful authenticated account check means
+   the complete MCP → Docker → API connection works. This check does not edit reading data.
+6. Quit and reopen Claude Desktop and Codex so their gateways reload the profile. Start with
+   “Check my Reading account, then show my weekly discovery articles.”
+
+The API base for this installation is
+`https://ijwafrfvsojhouebgzkh.supabase.co/functions/v1/api/v1`.
+
+## Installing on another computer
+
+Prerequisites: Node 20+ (Node 22 recommended), Docker Desktop running Linux containers, and a
+Docker MCP Toolkit version with profiles and native `docker pass` support. Tested with MCP CLI
+v0.43.3 and Engine 29.7.2. From the repository's `mcp` directory:
+
+```sh
+npm ci --ignore-scripts
+docker mcp profile ls
+node setup.mjs --profile YOUR_EXISTING_PROFILE --url https://YOUR_PROJECT.supabase.co/functions/v1/api/v1
+node check.mjs --profile YOUR_EXISTING_PROFILE
+```
+
+Setup builds the image locally and adds/updates only the `reading-app` server in the supplied
+profile. It does not create a profile or change existing client connections. If needed, use
+Docker MCP Toolkit's Clients screen to connect your clients to that profile. You can provide
+`--docker` with the Docker executable path when automatic discovery cannot find it.
+
+`--skip-token` stages installation without authentication. Later, `node setup.mjs --token-only`
+finishes it. This permits tool discovery and connection testing before entering a token;
+actual data calls return `not_configured` until setup is complete.
+
+### Where configuration lives
+
+| Location | Contains |
+| --- | --- |
+| Docker native credential store, `docker/mcp/reading-app.api_token` | The integration token; supplied via stdin to `docker pass set` and injected at container startup. |
+| `~/.config/reading-app/mcp/config.json` | API URL, setup mode, profile ID and setup status. In Docker mode it contains **no token**. |
+| `~/.docker/mcp/catalogs/reading-app.json` | Server definition: image, public API URL, secret reference, allowed API host. No token value or host mounts. |
+| Local image `reading-app-mcp:local` | Node runtime, dependencies and three server source files. No credentials or personal reading data. |
+
+Docker's secret-listing API can report an unavailable Unix socket for Windows packaged apps.
+Native keychain storage and container-time injection were verified separately on this computer
+and through its gateway. Setup uses this supported path; it does not disable Docker's credential
+mount protections. If injection fails on another installation, update/restart Docker Desktop or
+use the direct local option below.
+
+The setup file uses a private user directory (Windows user/SYSTEM ACL, or Unix directory 0700
+and file 0600). The Docker build context is an explicit allowlist and never includes setup files.
+Revoke the integration token in Reading Preferences to remove access. To replace it, create a
+new token and run `node setup.mjs --token-only` again, then restart the clients.
+
+### Direct local option
+
+Run `npm ci --ignore-scripts`, then:
+
+```sh
+node setup.mjs --local --url https://YOUR_PROJECT.supabase.co/functions/v1/api/v1
+node check.mjs --local
+```
+
+This stores the token in the private configuration file instead of Docker's keychain. Setup
+prints the Node executable, server path and configuration path. Add them as a stdio MCP server
+in your client's configuration. For Claude Desktop, merge this entry into the existing
+`mcpServers` object rather than replacing other servers:
+
+```json
+{
+  "mcpServers": {
+    "reading-app": {
+      "command": "ABSOLUTE_PATH_TO_NODE",
+      "args": ["ABSOLUTE_PATH_TO_REPO/mcp/index.mjs"],
+      "env": { "READING_APP_CONFIG": "ABSOLUTE_PATH_TO_PRIVATE_CONFIG/config.json" }
+    }
+  }
+}
+```
+
+The configuration contains paths, not the token itself. Restart the client after changing it.
+Use either the Docker profile or the direct server for Reading to avoid duplicate tools.
+
+## What to ask Claude or Codex
+
+- “Show my weekly discovery articles and explain why each was recommended.”
+- “Save the second article to my reading queue.”
+- “Add history of science as an interest with weight 2.”
+- “Add The Beginning of Infinity by David Deutsch to my wishlist.”
+- “Mark that book finished, rate it 8.5, and leave the completion date unknown.”
+- “The first recommendation is too superficial. Record that feedback and find alternatives.”
+- “What is still running, and did the replacement edition finish?”
+
+Alternatives regenerate an **entire shelf edition**, retaining its original publication
+period. They do not silently replace a single card. The server returns job IDs promptly; the
+client checks progress and retrieves the resulting edition when finished.
+
+## Cost and operating limits
+
+This integration adds no hosted MCP service or paid model dependency of its own. The local
+container uses your existing Docker installation and computer. Claude/Codex usage remains
+subject to your existing plans. Reading existing records and manually editing the library do
+not invoke a model. Asking for generation, alternatives or missing slots runs the app's existing
+server-side generation pipeline and can incur its configured model/search-provider charges,
+subject to the app's budget checks. Claude being the MCP client does not replace that ranker.
+
+Docker Desktop must be running for the Docker connection. Discovery tools return article
+metadata, rationale and links; full article text requires a separate browsing capability.
+MCP tools do not expose permanent deletion, credential management, bulk import or budget changes.
 
 ## Authentication
 
@@ -37,42 +174,43 @@ Validate configuration with `GET /me`. Revocation is available through the websi
 tokens cannot permanently delete books/readings or manage credentials. The current database
 labels token-origin actions `openclaw`, including calls from your Claude MCP server.
 
-## Suggested tools
+## Implemented tools
 
-Tool names below are suggestions for your MCP wrapper; the HTTP endpoints are implemented.
+All names below are actual MCP tools. Parameters and descriptions are advertised to the client
+through `tools/list`; [API.md](API.md) documents the underlying HTTP contract.
 
-| Suggested MCP tool | HTTP operation | Main inputs / result |
+| MCP tool | HTTP operation | Main inputs / result |
 | --- | --- | --- |
-| `get_discovery` | `GET /recommendations` | Optional `horizon`; optional `period` and `version` require horizon. Returns shelves, article records, rationales, IDs, and job status. |
-| `get_discovery_archive` | `GET /recommendations/archive` | Optional horizon, limit, offset. Returns published/partial editions. |
-| `get_recommendation` | `GET /recommendation-entries/{id}` | Recommendation entry ID. Returns the entry, article, and source edition. |
-| `list_reading_queue` | `GET /readings` | Search `q`, `status`, `topic`, pagination. Discovery-only candidates are excluded by default. |
-| `get_reading` | `GET /readings/{id}` | Reading ID. Returns the current record and version for edits. |
-| `add_to_reading_queue` | `POST /readings` | `url` or `title`, optional notes/topics; `enrich:false` avoids metadata-fetch latency. |
-| `update_reading` | `PATCH /readings/{id}` | ID, current version, notes or status. Supports `saved`, `reading`, `finished`, `archived`. |
-| `save_recommendation` | `PATCH /recommendation-entries/{id}` | `{ "state": "saved" }`. Preserves the article's link to the edition. |
-| `set_recommendation_state` | `PATCH /recommendation-entries/{id}` | `read`, `dismissed`, or `active`. `read` also marks the article finished. |
-| `get_preferences` | `GET /preferences` | Returns interests, exclusions, feeds, reading lengths, time zone, and budget. |
-| `add_interest` | `POST /preferences/interests` | `topic`, optional numeric weight 0–3. Existing unrelated interests are preserved. |
-| `remove_interest` | `DELETE /preferences/interests/{topic}` | URL-encoded topic; optional version query parameter. |
-| `update_preferences` | `PATCH /preferences` | Current version and selected settings. Useful for explicit exclusions or trusted feeds. Array fields replace their lists. |
-| `list_books` | `GET /books` | Search/filter/sort/pagination; supports wishlist, reading, finished, stopped, unknown, and archived records. |
-| `get_book` | `GET /books/{id}` | Includes reading sessions and current versions. |
-| `add_book` | `POST /books` | Title, authors or `author_unknown:true`; optional status, dates, rating, topics, and notes. |
-| `edit_book` | `PATCH /books/{id}` | ID, current version, changed fields. `archived:true` archives and `archived:false` restores. |
-| `start_reading_session` | `POST /books/{id}/sessions` | Dates, rating, `session_status`; supports rereads. |
-| `edit_reading_session` | `PATCH /reading-sessions/{id}` | Session ID/version, dates, rating, status, notes. |
-| `give_feedback` | `POST /feedback` | Action, target ID, optional text/scope. A recommendation entry ID is sufficient to resolve article context. |
-| `list_feedback` | `GET /feedback` | Optional reading/book ID and pagination. |
-| `edit_feedback` / `remove_feedback` | `PATCH` / `DELETE /feedback/{id}` | Edit with a version; deletion excludes the event from future personalization. |
-| `find_alternatives` | `POST /recommendation-jobs` | `kind:"alternatives"` and preferably `batch_id` from the displayed shelf. Returns job IDs. |
-| `fill_discovery_gaps` | `POST /recommendation-jobs` | `kind:"fill_missing"` plus batch ID or horizon. Preserves the selected edition's existing picks. |
-| `generate_discovery` | `POST /recommendation-jobs` | `kind:"initial"`, optional horizon. Omit horizon to queue all five. |
-| `get_generation_job` / `list_generation_jobs` | `GET /jobs/{id}` / `GET /jobs` | Progress, failure details, and resulting batch ID on the detail endpoint. |
-| `get_generation_config` | `GET /generation-config` | Provider readiness, models, estimates, spend/cap, and scheduler status. |
+| `reading_get_account` | `GET /me` | Connected owner, token scopes, time zone and current periods. |
+| `reading_get_discovery` | `GET /recommendations` | Optional `horizon`; optional `period` and `version` require horizon. Returns shelves, article records, rationales, IDs, and job status. |
+| `reading_get_discovery_archive` | `GET /recommendations/archive` | Optional horizon, limit, offset. Returns published/partial editions. |
+| `reading_get_recommendation` | `GET /recommendation-entries/{id}` | Recommendation entry ID. Returns the entry, article, and source edition. |
+| `reading_list_reading_queue` | `GET /readings` | Search `q`, `status`, `topic`, pagination. Discovery-only candidates are excluded by default. |
+| `reading_get_reading` | `GET /readings/{id}` | Reading ID. Returns the current record and version for edits. |
+| `reading_add_to_reading_queue` | `POST /readings` | `url` or `title`, optional notes/topics; `enrich:false` avoids metadata-fetch latency. |
+| `reading_update_reading` | `PATCH /readings/{id}` | ID, current version, notes or status. Supports `saved`, `reading`, `finished`, `archived`. |
+| `reading_save_recommendation` | `PATCH /recommendation-entries/{id}` | Entry ID; the tool sets state to saved and preserves its source edition. |
+| `reading_set_recommendation_state` | `PATCH /recommendation-entries/{id}` | `read`, `dismissed`, or `active`. `read` also marks the article finished. |
+| `reading_get_preferences` | `GET /preferences` | Returns interests, exclusions, feeds, reading lengths, time zone, and budget. |
+| `reading_add_interest` | `POST /preferences/interests` | `topic`, optional numeric weight 0–3. Existing unrelated interests are preserved. |
+| `reading_remove_interest` | `DELETE /preferences/interests/{topic}` | Topic name; the MCP server handles URL encoding. |
+| `reading_update_preferences` | `PATCH /preferences` | Current version and selected settings. Useful for explicit exclusions or trusted feeds. Array fields replace their lists. |
+| `reading_list_books` | `GET /books` | Search/filter/sort/pagination; supports wishlist, reading, finished, stopped, unknown, and archived records. |
+| `reading_get_book` | `GET /books/{id}` | Includes reading sessions and current versions. |
+| `reading_add_book` | `POST /books` | Title, authors or `author_unknown:true`; optional status, dates, rating, topics, and notes. |
+| `reading_edit_book` | `PATCH /books/{id}` | ID, current version, changed fields. `archived:true` archives and `archived:false` restores. |
+| `reading_start_reading_session` | `POST /books/{id}/sessions` | Dates, rating, `session_status`; supports rereads. |
+| `reading_edit_reading_session` | `PATCH /reading-sessions/{id}` | Session ID/version, dates, rating, status, notes. |
+| `reading_give_feedback` | `POST /feedback` | Action, target ID, optional text/scope. A recommendation entry ID is sufficient to resolve article context. |
+| `reading_list_feedback` | `GET /feedback` | Optional reading/book ID and pagination. |
+| `reading_edit_feedback` / `reading_remove_feedback` | `PATCH` / `DELETE /feedback/{id}` | Edit with a version; deletion excludes the event from future personalization. |
+| `reading_find_alternatives` | `POST /recommendation-jobs` | Prefer `batch_id` from the displayed shelf, or supply horizon. Tool sets kind to alternatives; returns job IDs. |
+| `reading_fill_discovery_gaps` | `POST /recommendation-jobs` | Batch ID or horizon; tool sets kind to fill_missing. Preserves the edition's existing picks. |
+| `reading_generate_discovery` | `POST /recommendation-jobs` | Optional horizon; tool sets kind to initial. Omit horizon to queue all five. |
+| `reading_get_generation_job` / `reading_list_generation_jobs` | `GET /jobs/{id}` / `GET /jobs` | Progress, failure details, and resulting batch ID on the detail endpoint. |
+| `reading_get_generation_config` | `GET /generation-config` | Provider readiness, models, estimates, spend/cap, and scheduler status. |
 
-Additional data tools can wrap JSON export, book CSV export, and preview/commit import. Treat
-import as a separate deliberate operation: it can add many records and update settings.
+JSON/CSV export and import remain API/website capabilities; they are not in the MCP tool set.
 
 ## Typical workflows
 
@@ -148,7 +286,7 @@ does not change that ranker. Generation needs provider credentials and budget he
 incur provider charges. Existing discovery retrieval and manual library operations do not need
 new model generation.
 
-## Request handling in your wrapper
+## Reliability and development
 
 - For supported POST operations, generate one `Idempotency-Key` per logical action and reuse
   the same key and request body on transport retries. Use a fresh key for a new user action.
@@ -159,3 +297,34 @@ new model generation.
 - Return structured API errors (`error.code`, `error.message`, `requestId`) to the MCP caller.
 - Keep ordinary results compact. Job detail includes checkpoints and candidate evidence;
   usually return status, stage, counts, cost, batch ID, and error rather than the full checkpoint.
+
+The implementation enforces strict argument schemas and required versions on ordinary edits.
+POST requests receive an idempotency key; on uncertain results it returns the key instead of
+automatically retrying a write. Job checkpoints are omitted from detail/generation tool output.
+Tests cover the actual MCP handshake and tool calls against a mock HTTP API, including write
+validation, version conflicts, duplicate-request keys and error redaction.
+
+```sh
+cd mcp
+npm ci --ignore-scripts
+npm test
+```
+
+The dedicated GitHub workflow runs these tests and builds the Docker image. To update the local
+installation after pulling changes, run:
+
+```sh
+node setup.mjs --profile YOUR_EXISTING_PROFILE --skip-token
+node check.mjs --profile YOUR_EXISTING_PROFILE
+```
+
+This rebuilds the image while retaining the configured token, then refreshes the server snapshot.
+Restart connected clients afterward. To remove only this integration from a profile, use
+`docker mcp profile server remove YOUR_EXISTING_PROFILE --name reading-app` and revoke the token
+in the website.
+
+Implementation files: `index.mjs` owns stdio startup; `server.mjs` defines the 30 tools;
+`client.mjs` handles HTTP/auth/errors; `setup.mjs` and `setup-lib.mjs` build/register/configure;
+`check.mjs` verifies a read-only connection. Docker profile and server formats follow
+[Docker's profile documentation](https://github.com/docker/mcp-gateway/blob/main/docs/profiles.md)
+and [server specification](https://github.com/docker/mcp-gateway/blob/main/docs/server-entry-spec.md).

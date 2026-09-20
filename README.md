@@ -17,6 +17,7 @@ only the configured GitHub account can sign in and read or change anything.
 | Frontend | TypeScript + React (Vite), static build on GitHub Pages |
 | Backend | Supabase: Postgres with row-level security, GitHub sign-in, one Edge Function serving the versioned `/v1` API, scheduled jobs (Phase 2) |
 | Bot | `bot/reading.mjs` CLI + OpenClaw skill, authenticated with revocable scoped tokens |
+| MCP | 30 tools for Claude/Codex, running in a shared Docker MCP profile or local Node process |
 | Shared logic | `supabase/functions/_shared/periods.ts` computes publication windows for both the site and the API |
 
 ```
@@ -25,6 +26,7 @@ supabase/migrations/     Schema, RLS policies, realtime publication
 supabase/functions/api/  /v1 API (books, sessions, readings, recommendations, feedback,
                          preferences, jobs, tokens, export/import)
 bot/                     OpenClaw CLI
+mcp/                     MCP server, Docker image, secure setup and connection checks
 openclaw/skills/         OpenClaw skill file
 docs/                    API contract, deployment, OpenClaw setup
 tests/                   Unit tests for period windows and URL canonicalisation
@@ -54,7 +56,7 @@ npm test
 
 - [Deployment](docs/DEPLOY.md) — Supabase project, GitHub OAuth, Actions variables, Pages
 - [API v1](docs/API.md) — endpoints, auth, idempotency, versioning
-- [Claude MCP integration](docs/MCP.md) — tool-to-endpoint mapping and workflows for your own MCP server
+- [MCP integration](docs/MCP.md) — installed Docker/local server, Claude/Codex setup, tools and examples
 - [Generation](docs/GENERATION.md) — the discovery pipeline, scheduling, configuration, cost
 - [OpenClaw](docs/OPENCLAW.md) — install the skill and configure the bot token
 

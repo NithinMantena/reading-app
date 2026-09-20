@@ -6,6 +6,7 @@ import * as preferences from "../supabase/functions/api/handlers/preferences";
 import * as recommendations from "../supabase/functions/api/handlers/recommendations";
 import * as jobs from "../supabase/functions/api/handlers/jobs";
 import * as feedback from "../supabase/functions/api/handlers/feedback";
+import * as books from "../supabase/functions/api/handlers/books";
 import { parseInterests } from "../supabase/functions/_shared/interests";
 import { publicationFits, windowFromStored } from "../supabase/functions/_shared/periods";
 
@@ -63,6 +64,24 @@ function invoke(handler: Handler, ctx: Ctx, body: Record<string, unknown> = {}, 
 
 beforeEach(() => vi.stubGlobal("Deno", { env: { get: () => undefined } }));
 afterEach(() => vi.unstubAllGlobals());
+
+describe("MCP book session edits", () => {
+  it("clears explicitly unknown dates and session notes, even with legacy aliases present", async () => {
+    const existing = { id: entryId, book_id: batchId, version: 2, started_on: "2026-01-01", finished_on: "2026-01-10", notes: "Old note" };
+    const c = context([
+      { table: "reading_sessions", data: existing },
+      { table: "reading_sessions", data: { ...existing, started_on: null, finished_on: null, notes: null }, check: q => {
+        expect(q.payload).toEqual({ started_on: null, finished_on: null, notes: null });
+        expect(q.filters).toContainEqual(["version", 2]);
+      } },
+      { table: "reading_sessions", data: { id: entryId } },
+      { table: "books", data: { id: batchId } },
+      { table: "reading_sessions", data: [] },
+    ]);
+    await invoke(books.patchSession, c.ctx, { version: 2, started_on: null, finished_on: null, session_notes: null, start_date: "2025-01-01", finish_date: "2025-01-02", what_stayed: "Legacy note" }, { id: entryId });
+    c.done();
+  });
+});
 
 describe("incremental interests", () => {
   it("merges an addition into fresh settings after a concurrent edit", async () => {

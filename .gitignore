@@ -9,3 +9,4 @@ Thumbs.db
 supabase/.temp/
 supabase/.branches/
 coverage/
+mcp/config.local.json
