@@ -33,6 +33,8 @@ export interface ModelSetup {
   saved: boolean;
   keys: Partial<Record<KeyName, string>>;
   keySource: Partial<Record<KeyName, "settings" | "server">>;
+  /** Set when saved settings could not be read; defaults and server keys are in use. */
+  loadError?: string;
 }
 
 const env = (name: string): string | undefined => (typeof Deno !== "undefined" ? Deno.env.get(name) : undefined) || undefined;
@@ -76,7 +78,8 @@ export async function loadModelSetup(db: SupabaseClient): Promise<ModelSetup> {
     if (saved) { keys[k] = saved; keySource[k] = "settings"; }
     else if (fromEnv) { keys[k] = fromEnv; keySource[k] = "server"; }
   }
-  return { config: resolveConfig(row?.config ?? null, keys), saved: Boolean(row?.config), keys, keySource };
+  if (error) console.error("model_settings_private failed", error.message);
+  return { config: resolveConfig(row?.config ?? null, keys), saved: Boolean(row?.config), keys, keySource, ...(error ? { loadError: error.message } : {}) };
 }
 
 export function providerReady(setup: ModelSetup): boolean {

@@ -27,6 +27,7 @@ export async function modelSettingsView(ctx: Ctx) {
   return {
     config: setup.config,
     saved: setup.saved,
+    loadError: setup.loadError ?? null,
     keys,
     access: setup.keys.typesafe ? "jev" : "text-model",
     defaults: { providers: PROVIDER_DEFAULTS, compare: DEFAULT_COMPARE },

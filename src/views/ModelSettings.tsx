@@ -82,6 +82,7 @@ export function ModelsSection() {
     <section className="card">
       <h2>AI models</h2>
       <p className="small muted">The main model picks your articles. The helper writes search queries and settles access checks Jev isn't sure about. Jev checks whether borderline articles are free to read in full. Keys are stored encrypted in your Supabase project, never shown again, and can only be changed from this signed-in page.</p>
+      {data.loadError && <div className="notice" style={{ marginBottom: "0.75rem" }}>Saved settings could not be read ({data.loadError}); defaults and server keys are in use.</div>}
       <div className="form-grid">
         <div className="field wide">
           <span className="label">Provider</span>

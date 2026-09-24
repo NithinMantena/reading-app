@@ -109,6 +109,7 @@ export type KeyName = ModelProvider | "typesafe";
 export interface ModelSettings {
   config: { provider: ModelProvider; main: string; helper: string; compare: string[] };
   saved: boolean;
+  loadError: string | null;
   keys: Record<KeyName, { set: boolean; last4: string | null; source: "settings" | "server" | null }>;
   access: "jev" | "text-model";
   defaults: { providers: Record<ModelProvider, { main: string; helper: string }>; compare: string[] };
