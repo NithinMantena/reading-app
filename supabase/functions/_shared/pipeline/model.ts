@@ -1,20 +1,26 @@
-// Provider-neutral model adapter with an Anthropic implementation (official SDK).
-//
-// Two roles: a capable ranker (Claude Opus 5) for final selection and deeper judgment,
-// and a lower-cost classifier (Claude Haiku 4.5) for query generation and access checks.
-import Anthropic from "@anthropic-ai/sdk";
+// Discovery prompts, independent of provider. Three model roles:
+//   main   - ranks candidates and suggests readings for long horizons (quality matters most)
+//   helper - writes search queries and settles access checks Jev is unsure about
+//   jev    - TypeSafe Jev access check (see jev.ts); optional, falls back to helper
 import type { Candidate, CostLedger, RankingContext, RankingResult, Selection } from "./types.ts";
 import type { Horizon } from "../periods.ts";
-import { priceCall, recordCall } from "./budget.ts";
+import { JevClient } from "./jev.ts";
+import { makeTextModel, type TextModel } from "./llm.ts";
+import { parseCompareEntry, providerReady, type ModelSetup } from "./setup.ts";
 
-export const PROMPT_VERSION = "2026-09-06.1";
+export const PROMPT_VERSION = "2026-09-24.1";
 
 export interface ModelAdapter {
+  /** Provider of the main model. */
   name: string;
+  main: TextModel;
+  helper: TextModel;
+  jev: JevClient | null;
   generateQueries(input: QueryInput): Promise<{ core: string[]; exploration: string[] }>;
+  /** Text-model access check, used for items Jev is unsure about or when Jev is unavailable. */
   classifyAccess(items: AccessInput[], ledger: CostLedger): Promise<AccessVerdict[]>;
   proposeLeads(input: LeadInput): Promise<{ title: string; url?: string; why: string }[]>;
-  rank(input: RankInput, model?: string): Promise<RankingResult>;
+  rank(input: RankInput, model?: TextModel): Promise<RankingResult>;
 }
 
 export interface QueryInput {
@@ -66,19 +72,6 @@ const HORIZON_GUIDANCE: Record<Horizon, string> = {
   decade: "Decade shelf: favour foundational contributions with evidence of lasting influence, such as citations, adoption, or later work building on it. Later commentary may support the judgment, but the work itself must belong to the period.",
 };
 
-function textOf(msg: Anthropic.Message): string {
-  return msg.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("");
-}
-
-function usageOf(msg: Anthropic.Message) {
-  return {
-    input: msg.usage.input_tokens,
-    output: msg.usage.output_tokens,
-    cacheRead: msg.usage.cache_read_input_tokens ?? 0,
-    cacheWrite: msg.usage.cache_creation_input_tokens ?? 0,
-  };
-}
-
 function parseJson<T>(text: string): T {
   const trimmed = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const start = trimmed.indexOf("{");
@@ -105,40 +98,27 @@ Derived preference summary: ${summary}
 Books the reader has finished (for calibration, not exclusion): ${ctx.finishedBookTitles.slice(0, 60).join("; ") || "unknown"}`;
 }
 
-export class AnthropicAdapter implements ModelAdapter {
-  name = "anthropic";
-  private client: Anthropic;
-  constructor(apiKey: string, private rankerModel: string, private classifierModel: string) {
-    this.client = new Anthropic({ apiKey, maxRetries: 2, timeout: 120_000 });
-  }
-
-  private async call(purpose: string, model: string, params: Omit<Anthropic.MessageCreateParamsNonStreaming, "model">, ledger: CostLedger): Promise<Anthropic.Message> {
-    const msg = await this.client.messages.create({ model, ...params });
-    const usage = usageOf(msg);
-    recordCall(ledger, { purpose, model, input: usage.input, output: usage.output, cacheRead: usage.cacheRead, usd: priceCall(model, usage) });
-    if (msg.stop_reason === "refusal") {
-      throw new Error(`Model declined (${msg.stop_details?.category ?? "unspecified"}): ${msg.stop_details?.explanation ?? ""}`.trim());
-    }
-    if (msg.stop_reason === "max_tokens") throw new Error("Model output was truncated (max_tokens)");
-    return msg;
+export class Models implements ModelAdapter {
+  name: string;
+  constructor(public main: TextModel, public helper: TextModel, public jev: JevClient | null) {
+    this.name = main.provider;
   }
 
   async generateQueries(input: QueryInput): Promise<{ core: string[]; exploration: string[] }> {
-    const msg = await this.call("queries", this.classifierModel, {
-      max_tokens: 1500,
+    const { text } = await this.helper.complete({
+      purpose: "queries",
+      maxTokens: 1500,
+      effort: "low",
       system: "You write web and scholarly search queries for a personal reading recommender. Reply with JSON only.",
-      messages: [{
-        role: "user",
-        content: `Shelf: ${input.horizon} (works published ${input.windowLabel}).
+      user: `Shelf: ${input.horizon} (works published ${input.windowLabel}).
 ${contextBlock(input.context)}
 
 Produce search queries that would surface high-quality readings from that period. Return JSON:
 {"core": [8-12 short queries grounded in the stated interests and feedback],
  "exploration": [3-4 queries for adjacent or unfamiliar subjects with a credible link to the reader's interests, avoiding the hard exclusions]}
 Queries should be specific enough to find substantive essays, reports, or papers, not generic news. Do not include dates in the queries; the date window is applied separately.`,
-      }],
     }, input.ledger);
-    const parsed = parseJson<{ core?: string[]; exploration?: string[] }>(textOf(msg));
+    const parsed = parseJson<{ core?: string[]; exploration?: string[] }>(text);
     return {
       core: (parsed.core ?? []).filter((q) => typeof q === "string" && q.trim()).slice(0, 12),
       exploration: (parsed.exploration ?? []).filter((q) => typeof q === "string" && q.trim()).slice(0, 4),
@@ -147,42 +127,39 @@ Queries should be specific enough to find substantive essays, reports, or papers
 
   async classifyAccess(items: AccessInput[], ledger: CostLedger): Promise<AccessVerdict[]> {
     if (!items.length) return [];
-    const msg = await this.call("access", this.classifierModel, {
-      max_tokens: 2500,
+    const { text } = await this.helper.complete({
+      purpose: "access",
+      maxTokens: 2500,
+      effort: "low",
       system: "You judge whether extracted web text is the complete reading, an abstract, or a paywall teaser. Reply with JSON only.",
-      messages: [{
-        role: "user",
-        content: `For each item decide: is the extracted text the complete work (full_text), a substantive abstract/summary of a longer work (abstract), a truncated teaser behind a paywall or login (teaser), or unclear. Return JSON {"verdicts":[{"id":"...","complete":true|false,"kind":"full_text|abstract|teaser|unclear","note":"<=20 words"}]}.
+      user: `For each item decide: is the extracted text the complete work (full_text), a substantive abstract/summary of a longer work (abstract), a truncated teaser behind a paywall or login (teaser), or unclear. Return JSON {"verdicts":[{"id":"...","complete":true|false,"kind":"full_text|abstract|teaser|unclear","note":"<=20 words"}]}.
 
 ${items.map((it) => `ID ${it.id} | ${it.url} | ~${it.words} words | markers: ${it.markers.join(", ") || "none"}
 Title: ${it.title ?? "?"}
 Text sample:
 ${it.sample}
 ---`).join("\n")}`,
-      }],
     }, ledger);
-    const parsed = parseJson<{ verdicts?: AccessVerdict[] }>(textOf(msg));
+    const parsed = parseJson<{ verdicts?: AccessVerdict[] }>(text);
     return (parsed.verdicts ?? []).filter((v) => v && typeof v.id === "string");
   }
 
   async proposeLeads(input: LeadInput): Promise<{ title: string; url?: string; why: string }[]> {
-    const msg = await this.call("leads", this.rankerModel, {
-      max_tokens: 4000,
-      output_config: { effort: "medium" },
-      system: "You suggest candidate readings for later verification. Every suggestion will be independently checked for publication date and free access; unverifiable suggestions are simply dropped, so prefer works you are confident exist and are freely readable.",
-      messages: [{
-        role: "user",
-        content: `Shelf: ${input.horizon}. Eligible works were originally published between ${input.windowStart.slice(0, 10)} and ${input.windowEnd.slice(0, 10)} (exclusive): ${input.windowLabel}.
+    const { text } = await this.main.complete({
+      purpose: "leads",
+      maxTokens: 4000,
+      effort: "medium",
+      system: "You suggest candidate readings for later verification. Every suggestion will be independently checked for publication date and free access; unverifiable suggestions are simply dropped, so prefer works you are confident exist and are freely readable. Reply with JSON only.",
+      user: `Shelf: ${input.horizon}. Eligible works were originally published between ${input.windowStart.slice(0, 10)} and ${input.windowEnd.slice(0, 10)} (exclusive): ${input.windowLabel}.
 ${contextBlock(input.context)}
 
 Suggest up to ${input.count} works from that period that a serious reader with these interests should know: enduring essays, landmark papers, foundational reports. Include about a quarter from adjacent or unfamiliar fields with a credible connection. Prefer items with a stable, free full-text URL (publisher page, arXiv, institutional repository, author site). Return JSON {"leads":[{"title":"...","url":"https://...","why":"<=25 words"}]}. Omit the url if unsure rather than inventing one.`,
-      }],
     }, input.ledger);
-    const parsed = parseJson<{ leads?: { title: string; url?: string; why: string }[] }>(textOf(msg));
+    const parsed = parseJson<{ leads?: { title: string; url?: string; why: string }[] }>(text);
     return (parsed.leads ?? []).filter((l) => l && typeof l.title === "string").slice(0, input.count);
   }
 
-  async rank(input: RankInput, model = this.rankerModel): Promise<RankingResult> {
+  async rank(input: RankInput, model: TextModel = this.main): Promise<RankingResult> {
     const cands = input.candidates.filter((c) => c.status === "valid");
     const list = cands.map((c) => {
       const excerpt = (c.text ?? c.description ?? "").slice(0, 3500);
@@ -214,13 +191,8 @@ Candidates (${cands.length}):
 
 ${list}`;
 
-    const msg = await this.call("rank", model, {
-      max_tokens: 12000,
-      output_config: { effort: "high" },
-      system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
-      messages: [{ role: "user", content: user }],
-    }, input.ledger);
-    const parsed = parseJson<{ selections?: Selection[]; rejected?: { candidateId: string; reason: string }[]; batchNote?: string }>(textOf(msg));
+    const { text, usage, usd } = await model.complete({ purpose: "rank", maxTokens: 12000, effort: "high", cacheSystem: true, system, user }, input.ledger);
+    const parsed = parseJson<{ selections?: Selection[]; rejected?: { candidateId: string; reason: string }[]; batchNote?: string }>(text);
     const ids = new Set(cands.map((c) => c.id));
     const selections = (parsed.selections ?? [])
       .filter((s) => s && ids.has(s.candidateId))
@@ -235,20 +207,40 @@ ${list}`;
         surpriseConnection: s.surpriseConnection ? String(s.surpriseConnection).slice(0, 300) : undefined,
       }))
       .sort((a, b) => a.rank - b.rank);
-    const usage = usageOf(msg);
     return {
-      model,
+      model: model.model,
+      provider: model.provider,
       promptVersion: PROMPT_VERSION,
       selections,
       rejected: (parsed.rejected ?? []).filter((r) => r && ids.has(r.candidateId)),
       batchNote: parsed.batchNote,
       usage,
-      costUsd: priceCall(model, usage),
+      costUsd: usd,
     };
   }
 }
 
-export function makeAdapter(cfg: { anthropicKey?: string; rankerModel: string; classifierModel: string }): ModelAdapter | null {
-  if (cfg.anthropicKey) return new AnthropicAdapter(cfg.anthropicKey, cfg.rankerModel, cfg.classifierModel);
-  return null;
+/** Build the model set from saved settings; null when the chosen provider has no key. */
+export function makeAdapter(setup: ModelSetup): ModelAdapter | null {
+  if (!providerReady(setup)) return null;
+  const { provider, main, helper } = setup.config;
+  const key = setup.keys[provider]!;
+  const jev = setup.keys.typesafe ? new JevClient(setup.keys.typesafe) : null;
+  return new Models(makeTextModel(provider, main, key), makeTextModel(provider, helper, key), jev);
+}
+
+/** Ranker models for a comparison job; entries whose provider has no key are skipped. */
+export function comparisonModels(setup: ModelSetup): { models: TextModel[]; skipped: string[] } {
+  const models: TextModel[] = [];
+  const skipped: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of setup.config.compare) {
+    const parsed = parseCompareEntry(entry);
+    if (!parsed || seen.has(entry)) continue;
+    seen.add(entry);
+    const key = setup.keys[parsed.provider];
+    if (key) models.push(makeTextModel(parsed.provider, parsed.model, key));
+    else skipped.push(entry);
+  }
+  return { models, skipped };
 }

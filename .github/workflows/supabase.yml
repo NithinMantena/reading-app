@@ -5,7 +5,8 @@ name: Deploy backend (Supabase)
 #   SUPABASE_PROJECT_REF   (the project's reference id)
 #   SUPABASE_DB_PASSWORD   (database password chosen at project creation)
 # Optional provider secrets (forwarded to the functions only when present):
-#   ANTHROPIC_API_KEY, EXA_API_KEY, BRAVE_API_KEY, OPENALEX_MAILTO
+#   ANTHROPIC_API_KEY, GEMINI_API_KEY, TYPESAFE_API_KEY, EXA_API_KEY, BRAVE_API_KEY, OPENALEX_MAILTO
+# Model keys can instead be saved in the app (Preferences → AI models), which takes precedence.
 
 on:
   push:
@@ -61,12 +62,16 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
           EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
           BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
           OPENALEX_MAILTO: ${{ secrets.OPENALEX_MAILTO }}
         run: |
           args=()
           [ -n "$ANTHROPIC_API_KEY" ] && args+=("ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
+          [ -n "$GEMINI_API_KEY" ] && args+=("GEMINI_API_KEY=$GEMINI_API_KEY")
+          [ -n "$TYPESAFE_API_KEY" ] && args+=("TYPESAFE_API_KEY=$TYPESAFE_API_KEY")
           [ -n "$EXA_API_KEY" ] && args+=("EXA_API_KEY=$EXA_API_KEY")
           [ -n "$BRAVE_API_KEY" ] && args+=("BRAVE_API_KEY=$BRAVE_API_KEY")
           [ -n "$OPENALEX_MAILTO" ] && args+=("OPENALEX_MAILTO=$OPENALEX_MAILTO")
@@ -74,7 +79,7 @@ jobs:
             supabase secrets set --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}" "${args[@]}"
             echo "Forwarded ${#args[@]} provider secret(s)."
           else
-            echo "::notice::No provider secrets set; generation will report 'no model provider' until ANTHROPIC_API_KEY is added."
+            echo "::notice::No provider secrets set; add model keys in the app (Preferences → AI models)."
           fi
       - name: Deploy functions
         if: steps.check.outputs.configured == 'true'

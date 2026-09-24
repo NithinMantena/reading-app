@@ -4,6 +4,7 @@ import { fromPgError, must, pageParams } from "../../_shared/db.ts";
 import { HORIZONS, windowFor, type Horizon } from "../../_shared/periods.ts";
 import { bad, isUuid, optEnum, optString } from "../../_shared/validate.ts";
 import { loadSettings } from "./preferences.ts";
+import { loadModelSetup, providerReady } from "../../_shared/pipeline/setup.ts";
 
 const KINDS = ["initial", "alternatives", "fill_missing", "scheduled", "model_comparison"] as const;
 
@@ -30,7 +31,7 @@ export const create: Handler = async (ctx, _p, body) => {
   const list = horizon ? [horizon] : HORIZONS;
 
   const cap = Number((settings.budget as Record<string, unknown>).monthly_cap_usd ?? 0);
-  const providerReady = Boolean(Deno.env.get("ANTHROPIC_API_KEY"));
+  const ready = providerReady(await loadModelSetup(ctx.db));
   const jobs = [];
   for (const h of list) {
     const w = windowFor(h as Horizon, new Date(), settings.time_zone);
@@ -64,7 +65,7 @@ export const create: Handler = async (ctx, _p, body) => {
 
   const warnings: string[] = [];
   if (cap <= 0) warnings.push("Monthly spending cap is 0; jobs will fail until a budget is set in Preferences.");
-  if (!providerReady) warnings.push("No model provider is configured (ANTHROPIC_API_KEY); jobs will fail until it is set.");
+  if (!ready) warnings.push("No API key for the chosen model provider; add one in Preferences → AI models or jobs will fail.");
   return { status: 202, body: { jobs, warnings, workerUrl } };
 };
 

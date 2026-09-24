@@ -2,7 +2,7 @@
 // OpenClaw bot share one set of business rules.
 import { API_BASE, SUPABASE_URL, supabase } from "./supabase";
 import type {
-  Book, FeedbackEvent, GenerationConfig, IntegrationToken, Job, Paged, Reading, ReadingSession, Settings, Shelf, Batch,
+  Book, FeedbackEvent, GenerationConfig, IntegrationToken, Job, JobDetail, ModelSettings, ModelSettingsUpdate, Paged, Reading, ReadingSession, Settings, Shelf, Batch,
 } from "./types";
 
 export class ApiClientError extends Error {
@@ -94,7 +94,12 @@ export const api = {
   jobs: {
     create: (body: { kind: string; horizon?: string }) => call<{ jobs: Job[]; warnings: string[] }>("POST", "/recommendation-jobs", body, { idempotent: true }),
     list: () => call<Paged<Job>>("GET", "/jobs"),
-    get: (id: string) => call<Job>("GET", `/jobs/${id}`),
+    get: (id: string) => call<JobDetail>("GET", `/jobs/${id}`),
+  },
+
+  models: {
+    get: () => call<ModelSettings>("GET", "/model-settings"),
+    put: (body: ModelSettingsUpdate) => call<ModelSettings>("PUT", "/model-settings", body),
   },
 
   generation: {

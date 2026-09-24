@@ -6,6 +6,7 @@
 import { authenticate, requireScope, serviceClient } from "../_shared/auth.ts";
 import { ApiError, CORS_HEADERS, errorResponse, json } from "../_shared/http.ts";
 import { claimJob, dispatch, runConfigFromEnv, runJob } from "../_shared/pipeline/runner.ts";
+import { loadModelSetup, providerReady } from "../_shared/pipeline/setup.ts";
 
 Deno.serve(async (req: Request) => {
   const requestId = crypto.randomUUID().slice(0, 8);
@@ -56,7 +57,8 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, task, processed: results, logs, requestId });
     }
     if (task === "config") {
-      return json({ ok: true, provider: cfg.anthropicKey ? "anthropic" : null, ranker: cfg.rankerModel, classifier: cfg.classifierModel, search: cfg.exaKey ? "exa" : cfg.braveKey ? "brave" : "free-sources-only", requestId });
+      const setup = await loadModelSetup(db);
+      return json({ ok: true, provider: providerReady(setup) ? setup.config.provider : null, ranker: setup.config.main, helper: setup.config.helper, access: setup.keys.typesafe ? "jev" : "text-model", search: cfg.exaKey ? "exa" : cfg.braveKey ? "brave" : "free-sources-only", requestId });
     }
     throw new ApiError(400, "bad_task", `Unknown task '${task}'`);
   } catch (err) {

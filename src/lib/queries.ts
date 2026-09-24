@@ -14,6 +14,7 @@ export const queries = {
   recommendations: { key: "recs", fetch: () => api.recommendations.all() },
   archive: (horizon: string) => ({ key: `recs:archive:${horizon}`, fetch: () => api.recommendations.archive(horizon) }),
   generationConfig: { key: "generation:config", fetch: () => api.generation.config() },
+  modelSettings: { key: "generation:models", fetch: () => api.models.get() },
   jobs: { key: "jobs", fetch: () => api.jobs.list() },
   tokens: { key: "tokens", fetch: () => api.tokens.list() },
   feedback: { key: "feedback:list", fetch: () => api.feedback.list({}) },

@@ -5,6 +5,7 @@ import { isNytUrl } from "../urls.ts";
 import { extractMainText, fetchDocument, parseDateEvidence, parseMetadata, paywallMarkers, wordCount } from "../extract.ts";
 import type { Candidate, Checkpoint, RunConfig } from "./types.ts";
 import type { AccessInput, ModelAdapter } from "./model.ts";
+import { MAX_JEV_ITEMS, screenAccess } from "./jev.ts";
 import { crossrefDate } from "./sources.ts";
 
 const PAYWALL_HOSTS = ["wsj.com", "ft.com", "bloomberg.com", "economist.com", "barrons.com", "thetimes.co.uk", "telegraph.co.uk", "washingtonpost.com", "theinformation.com", "stratechery.com", "hbr.org", "nature.com", "science.org", "cell.com", "sciencedirect.com", "springer.com", "wiley.com", "jstor.org", "tandfonline.com", "sagepub.com", "ieee.org", "acm.org"];
@@ -169,25 +170,59 @@ export async function validateBatch(cp: Checkpoint, horizon: Horizon, cfg: RunCo
   return done;
 }
 
-/** Assess stage: classify borderline access with the cheaper model, then mark valid. */
+/** Items the text model settles in one request when Jev is unsure (or unavailable). */
+export const MAX_LLM_ACCESS_ITEMS = 10;
+const MAX_LLM_ACCESS_ITEMS_WITHOUT_JEV = 25;
+
+/**
+ * Assess stage: settle borderline access, then mark valid. Jev reads each borderline article
+ * first; only the ones it is unsure about go to the helper text model, in a single request.
+ * Items beyond the caps stay unverified and are dropped, as before.
+ */
 export async function assess(cp: Checkpoint, adapter: ModelAdapter | null, log: (s: string) => void): Promise<void> {
   const cands = (cp.candidates ?? []).filter((c) => c.status === "fetched");
   const borderline = cands.filter((c) => c.accessClass === "unknown");
   if (borderline.length && adapter) {
-    const inputs: AccessInput[] = borderline.slice(0, 40).map((c) => ({
+    let forText: Candidate[] = borderline;
+    let textCap = MAX_LLM_ACCESS_ITEMS_WITHOUT_JEV;
+    if (adapter.jev) {
+      const batch = borderline.slice(0, MAX_JEV_ITEMS);
+      const results = await screenAccess(adapter.jev, batch, cp.cost);
+      const tally = { full_text: 0, abstract: 0, reject: 0, uncertain: 0, failed: 0 };
+      forText = [];
+      for (const [i, r] of results.entries()) {
+        const c = batch[i];
+        if (!r.result) { tally.failed++; forText.push(c); continue; }
+        const d = r.result;
+        c.accessEvidence = { ...c.accessEvidence, jev: { decision: d.decision, ...d.p } };
+        tally[d.decision]++;
+        if (d.decision === "full_text") { c.accessClass = "free_full_text"; c.evidenceDepth = "full_text"; }
+        else if (d.decision === "abstract") { c.accessClass = "open_copy"; c.evidenceDepth = "abstract"; }
+        else if (d.decision === "reject") { c.status = "rejected"; c.rejectReason = `access unverified (jev: ${d.reason})`; }
+        else forText.push(c);
+      }
+      const failures = results.filter((r) => r.error).map((r) => r.error);
+      log(`jev access: ${batch.length} checked; ${tally.full_text} full text, ${tally.abstract} abstract, ${tally.reject} rejected, ${tally.uncertain} unsure, ${tally.failed} failed${failures.length ? ` (${failures[0]})` : ""}`);
+      // If Jev failed outright, the text model takes the whole batch as it did before Jev.
+      textCap = tally.failed === batch.length ? MAX_LLM_ACCESS_ITEMS_WITHOUT_JEV : MAX_LLM_ACCESS_ITEMS;
+    }
+    const inputs: AccessInput[] = forText.slice(0, textCap).map((c) => ({
       id: c.id, url: c.url, title: c.title, words: c.words ?? 0, sample: (c.text ?? "").slice(0, 1800), markers: (c.accessEvidence.markers as string[]) ?? [],
     }));
-    try {
-      const verdicts = await adapter.classifyAccess(inputs, cp.cost);
-      for (const v of verdicts) {
-        const c = borderline.find((x) => x.id === v.id);
-        if (!c) continue;
-        if (v.kind === "full_text" && v.complete) { c.accessClass = "free_full_text"; c.evidenceDepth = "full_text"; c.accessEvidence = { ...c.accessEvidence, classifier: v.note }; }
-        else if (v.kind === "abstract" && (c.sourceEvidence.openalex || c.sourceEvidence.arxiv)) { c.accessClass = "open_copy"; c.evidenceDepth = "abstract"; c.accessEvidence = { ...c.accessEvidence, classifier: v.note }; }
-        else { c.status = "rejected"; c.rejectReason = `access unverified (${v.kind}: ${v.note})`; }
+    if (inputs.length) {
+      try {
+        const verdicts = await adapter.classifyAccess(inputs, cp.cost);
+        for (const v of verdicts) {
+          const c = forText.find((x) => x.id === v.id);
+          if (!c) continue;
+          if (v.kind === "full_text" && v.complete) { c.accessClass = "free_full_text"; c.evidenceDepth = "full_text"; c.accessEvidence = { ...c.accessEvidence, classifier: v.note }; }
+          else if (v.kind === "abstract" && (c.sourceEvidence.openalex || c.sourceEvidence.arxiv)) { c.accessClass = "open_copy"; c.evidenceDepth = "abstract"; c.accessEvidence = { ...c.accessEvidence, classifier: v.note }; }
+          else { c.status = "rejected"; c.rejectReason = `access unverified (${v.kind}: ${v.note})`; }
+        }
+        log(`text-model access: ${inputs.length} checked`);
+      } catch (e) {
+        log(`access classification failed: ${e instanceof Error ? e.message : e}`);
       }
-    } catch (e) {
-      log(`access classification failed: ${e instanceof Error ? e.message : e}`);
     }
   }
   for (const c of cands) {

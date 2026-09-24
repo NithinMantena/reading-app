@@ -16,6 +16,8 @@ import * as tokens from "./handlers/tokens.ts";
 import * as transfer from "./handlers/transfer.ts";
 import * as me from "./handlers/me.ts";
 import * as config from "./handlers/config.ts";
+import * as models from "./handlers/models.ts";
+import { loadModelSetup, providerReady } from "../_shared/pipeline/setup.ts";
 
 export type Handler = (
   ctx: Ctx,
@@ -57,7 +59,7 @@ route("GET", "/v1/health", null, async (_ctx, _p, _b, url) => {
   const db = serviceClient();
   // Idempotently tell cron where the worker lives (derived from this project's own URL).
   await db.rpc("register_worker_url", { p_url: `${Deno.env.get("SUPABASE_URL")}/functions/v1/worker` });
-  const [owner, sched] = await Promise.all([db.from("app_owner").select("github_login").eq("id", 1).maybeSingle(), db.rpc("scheduler_status")]);
+  const [owner, sched, setup] = await Promise.all([db.from("app_owner").select("github_login").eq("id", 1).maybeSingle(), db.rpc("scheduler_status"), loadModelSetup(db)]);
   const s = (sched.data ?? {}) as { workerRegistered?: boolean; jobs?: { name: string; schedule: string; active: boolean; lastRun: unknown }[]; error?: string };
   return {
     status: 200,
@@ -66,7 +68,8 @@ route("GET", "/v1/health", null, async (_ctx, _p, _b, url) => {
       db: owner.error ? `error: ${owner.error.message}` : "ok",
       owner: owner.data?.github_login ?? null,
       scheduler: sched.error ? `error: ${sched.error.message}` : { workerRegistered: s.workerRegistered ?? false, jobs: (s.jobs ?? []).map((j) => ({ name: j.name, schedule: j.schedule, active: j.active, lastRun: j.lastRun })), error: s.error },
-      provider: Deno.env.get("ANTHROPIC_API_KEY") ? "anthropic" : null,
+      provider: providerReady(setup) ? setup.config.provider : null,
+      access: setup.keys.typesafe ? "jev" : "text-model",
       search: Deno.env.get("EXA_API_KEY") ? "exa" : Deno.env.get("BRAVE_API_KEY") ? "brave" : "free-sources-only",
     },
   };
@@ -105,6 +108,8 @@ route("GET", "/v1/preference-summary", "read", preferences.summary);
 route("POST", "/v1/recommendation-jobs", "generation", jobs.create, { idempotent: true });
 route("GET", "/v1/jobs", "read", jobs.list);
 route("GET", "/v1/generation-config", "read", config.get);
+route("GET", "/v1/model-settings", "admin", models.get);
+route("PUT", "/v1/model-settings", "admin", models.put);
 route("GET", "/v1/jobs/:id", "read", jobs.get);
 
 route("GET", "/v1/integration-tokens", "admin", tokens.list);

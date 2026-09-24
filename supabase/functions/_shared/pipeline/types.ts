@@ -82,6 +82,7 @@ export interface Selection {
 
 export interface RankingResult {
   model: string;
+  provider?: string;
   promptVersion: string;
   selections: Selection[];
   rejected: { candidateId: string; reason: string }[];
@@ -160,9 +161,6 @@ export interface JobRow {
 }
 
 export interface RunConfig {
-  rankerModel: string;
-  classifierModel: string;
-  anthropicKey?: string;
   exaKey?: string;
   braveKey?: string;
   openAlexMailto?: string;

@@ -8,6 +8,7 @@ import { Badge, Modal } from "../components/ui";
 import { API_BASE } from "../lib/supabase";
 import { invalidate, useQuery } from "../lib/cache";
 import { queries } from "../lib/queries";
+import { ComparisonSection, ModelsSection } from "./ModelSettings";
 
 export function Preferences() {
   const { settings, setSettings, refreshSettings } = useAuth();
@@ -129,6 +130,8 @@ export function Preferences() {
           </div>
         </section>
 
+        <ModelsSection />
+
         <section className="card">
           <h2>Generation budget</h2>
           <div className="form-grid">
@@ -141,6 +144,7 @@ export function Preferences() {
           <GenerationSection />
         </section>
 
+        <ComparisonSection />
         <TokensSection />
         <DataSection />
         <FeedbackSection />
@@ -156,7 +160,7 @@ function GenerationSection() {
   if (!cfg) return <p className="small muted">Loading generation configuration…</p>;
   const price = (m: string) => {
     const p = cfg.prices[m];
-    return p && typeof p === "object" ? `$${p.input}/M in · $${p.output}/M out` : "rate unknown";
+    return p && typeof p === "object" ? `$${p.input}/M in · $${p.output}/M out` : "rate unknown; budgeted at Opus rates";
   };
   return (
     <div style={{ marginTop: "1rem" }}>
@@ -164,9 +168,10 @@ function GenerationSection() {
       <div className="table-wrap">
         <table>
           <tbody>
-            <tr><th>Model provider</th><td>{cfg.provider ?? <Badge tone="red">Not configured (set ANTHROPIC_API_KEY)</Badge>}</td></tr>
-            <tr><th>Ranking model</th><td className="mono">{cfg.models.ranker} <span className="muted small">({price(cfg.models.ranker)})</span></td></tr>
-            <tr><th>Classifier model</th><td className="mono">{cfg.models.classifier} <span className="muted small">({price(cfg.models.classifier)})</span></td></tr>
+            <tr><th>Model provider</th><td>{cfg.provider ?? <Badge tone="red">No API key (add one under AI models)</Badge>}</td></tr>
+            <tr><th>Main model</th><td className="mono">{cfg.models.ranker} <span className="muted small">({price(cfg.models.ranker)})</span></td></tr>
+            <tr><th>Helper model</th><td className="mono">{cfg.models.helper} <span className="muted small">({price(cfg.models.helper)})</span></td></tr>
+            <tr><th>Access check</th><td className="mono">{cfg.access === "jev" ? `${cfg.models.classifier}, helper when unsure` : cfg.models.helper} {cfg.access === "jev" && <span className="muted small">({price(cfg.models.classifier)})</span>}</td></tr>
             <tr><th>Search</th><td>{cfg.search === "free-sources-only" ? "Free sources only" : cfg.search} <span className="muted small">· always: {cfg.freeSources.join(", ")}</span></td></tr>
             <tr><th>Estimated cost per run</th><td className="small">{Object.entries(cfg.estimatePerRunUsd).map(([h, v]) => `${h} ~$${v.toFixed(2)}`).join(" · ")}</td></tr>
             <tr><th>Spent this month</th><td>${cfg.monthlySpendUsd.toFixed(2)} of ${cfg.monthlyCapUsd.toFixed(2)} cap</td></tr>
@@ -362,7 +367,7 @@ function JobsSection() {
                   <td className="small">{fmtDateTime(j.created_at)}</td><td>{j.kind}</td><td>{j.horizon}</td><td className="mono">{j.period_key}</td>
                   <td><Badge tone={j.status === "succeeded" ? "green" : j.status === "failed" ? "red" : j.status === "running" ? "blue" : ""}>{j.status}</Badge></td>
                   <td className="small">{j.stage}</td>
-                  <td className="small">{(j.cost as { actual_usd?: number; estimated_usd?: number }).actual_usd ?? (j.cost as { estimated_usd?: number }).estimated_usd ?? "—"}</td>
+                  <td className="small">{(() => { const c = j.cost as { actualUsd?: number }; return typeof c.actualUsd === "number" ? `$${c.actualUsd.toFixed(3)}` : "—"; })()}</td>
                   <td className="small" style={{ color: "var(--red)" }}>{j.error ?? ""}</td>
                 </tr>
               ))}

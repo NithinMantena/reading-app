@@ -37,7 +37,7 @@ tests/                   Unit tests for period windows and URL canonicalisation
 | Phase | Scope | State |
 | --- | --- | --- |
 | 1 · Shared foundation | Repo and app link, owner auth, database, book log, wishlist, saved readings, export/import, API, bot add/list/update | **Deployed** |
-| 2 · Discovery | Retrieval and validation pipeline, five shelves, surprise slot, scheduling, edition history, cost visibility | **Built** (see `docs/GENERATION.md`); needs `ANTHROPIC_API_KEY` and a budget to run |
+| 2 · Discovery | Retrieval and validation pipeline, five shelves, surprise slot, scheduling, edition history, cost visibility | **Built** (see `docs/GENERATION.md`); needs a Google or Claude API key (Preferences → AI models) and a budget to run |
 | 3 · Personalisation | Feedback-aware search, derived preference summaries, bot feedback/generation, recovery | Feedback is stored and already supplied to the ranker; derived summaries not yet built |
 
 The product requirements are in `Reading-App-PRD.md` in the parent folder of this repository

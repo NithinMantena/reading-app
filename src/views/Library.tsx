@@ -10,6 +10,7 @@ import { invalidate, useQuery } from "../lib/cache";
 import { filterBooks, queries } from "../lib/queries";
 import { Empty, Modal, StatusBadge } from "../components/ui";
 import { BookForm, fromBook, toPayload, type BookFormValues } from "../components/BookForm";
+import { findCover } from "../lib/openlibrary";
 
 type Tab = "all" | LibraryStatus | "archived";
 const TABS: { id: Tab; label: string }[] = [
@@ -33,6 +34,7 @@ export function Library() {
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState<BookFormValues>(fromBook());
   const [saving, setSaving] = useState(false);
+  const [coverRun, setCoverRun] = useState<{ done: number; total: number; found: number } | null>(null);
 
   useEffect(() => localStorage.setItem("lib.tab", tab), [tab]);
   useEffect(() => localStorage.setItem("lib.view", view), [view]);
@@ -50,6 +52,30 @@ export function Library() {
   );
   const total = books?.length ?? 0;
   const truncated = data ? data.total > data.items.length : false;
+
+  const missingCovers = useMemo(() => (data?.items ?? []).filter((b) => !b.cover_url), [data]);
+
+  // Fill in cover links from Open Library, one book at a time to stay polite to its API.
+  // Only the link is saved; images load from Open Library, not from our database.
+  const findMissingCovers = async () => {
+    const list = missingCovers;
+    setCoverRun({ done: 0, total: list.length, found: 0 });
+    let found = 0;
+    for (const [i, b] of list.entries()) {
+      try {
+        const url = await findCover(b);
+        if (url) {
+          await api.books.patch(b.id, { cover_url: url, version: b.version });
+          found++;
+        }
+      } catch { /* skip this book; a later run can retry it */ }
+      setCoverRun({ done: i + 1, total: list.length, found });
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    setCoverRun(null);
+    invalidate("books");
+    toast.notify(`Found covers for ${found} of ${list.length} books${found < list.length ? ". The rest can be set by hand under Edit → Cover image URL." : "."}`);
+  };
 
   const submit = async () => {
     if (!form.title.trim()) return toast.fail(new Error("Title is required"));
@@ -102,6 +128,11 @@ export function Library() {
             <button className={`btn sm ${view === "table" ? "on" : ""}`} onClick={() => setView("table")}>Table</button>
             <button className={`btn sm ${view === "covers" ? "on" : ""}`} onClick={() => setView("covers")}>Covers</button>
           </div>
+          {tab !== "archived" && (missingCovers.length > 0 || coverRun) && (
+            <button className="btn sm ghost" disabled={coverRun !== null} onClick={() => void findMissingCovers()}>
+              {coverRun ? `Finding covers… ${coverRun.done}/${coverRun.total}` : `Find missing covers (${missingCovers.length})`}
+            </button>
+          )}
         </div>
       </div>
 
@@ -123,8 +154,13 @@ export function Library() {
               {books.map((b) => (
                 <tr key={b.id}>
                   <td>
-                    <Link to={`/library/${b.id}`} style={{ fontWeight: 600, color: "var(--ink)" }}>{b.title}</Link>
-                    {b.topics.length > 0 && <div className="small muted">{b.topics.join(" · ")}</div>}
+                    <div className="row" style={{ flexWrap: "nowrap", alignItems: "center" }}>
+                      {b.cover_url ? <img className="cover-sm" style={{ width: 30, height: 44 }} src={b.cover_url} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.visibility = "hidden"; }} /> : <span className="cover-sm" style={{ width: 30, height: 44 }} aria-hidden="true" />}
+                      <div>
+                        <Link to={`/library/${b.id}`} style={{ fontWeight: 600, color: "var(--ink)" }}>{b.title}</Link>
+                        {b.topics.length > 0 && <div className="small muted">{b.topics.join(" · ")}</div>}
+                      </div>
+                    </div>
                   </td>
                   <td>{authorsText(b.authors, b.author_unknown)}</td>
                   <td><StatusBadge status={b.library_status} /></td>
@@ -141,7 +177,7 @@ export function Library() {
           {books.map((b) => (
             <Link key={b.id} to={`/library/${b.id}`} className="cover-tile">
               <div className="cover">
-                {b.cover_url ? <img src={b.cover_url} alt="" loading="lazy" /> : <span className="placeholder">{b.title}</span>}
+                {b.cover_url ? <img src={b.cover_url} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = "none"; }} /> : <span className="placeholder">{b.title}</span>}
               </div>
               <span className="t">{b.title}</span>
               <span className="a">{authorsText(b.authors, b.author_unknown)}</span>

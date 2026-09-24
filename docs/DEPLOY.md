@@ -84,14 +84,17 @@ usually simpler for a single-user app.
 
 ## Enabling generation (Phase 2)
 
-1. Add repository secrets (Settings → Secrets and variables → Actions), or from a terminal with
-   the GitHub CLI, which prompts for the value so it never lands in shell history:
+1. Model keys: paste them in the app under Preferences → AI models (Google or Claude for the
+   main model, plus TypeSafe for Jev). They are stored in Supabase Vault. Repository secrets
+   `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` and `TYPESAFE_API_KEY` also work as a fallback, set
+   from a terminal with the GitHub CLI, which prompts for the value so it never lands in shell
+   history:
 
    ```bash
-   gh secret set ANTHROPIC_API_KEY --repo NithinMantena/reading-app
+   gh secret set GEMINI_API_KEY --repo NithinMantena/reading-app
    ```
 
-   - `ANTHROPIC_API_KEY` (required) from https://console.anthropic.com/settings/keys
+   Search and other optional repository secrets:
    - `EXA_API_KEY` (recommended for daily/weekly quality) from https://dashboard.exa.ai
    - `BRAVE_API_KEY` (optional alternative), `OPENALEX_MAILTO` (optional, your email for polite-pool access)
 2. Run the **Deploy backend (Supabase)** workflow (Actions tab → *Deploy backend (Supabase)* →

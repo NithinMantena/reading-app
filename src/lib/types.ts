@@ -91,7 +91,8 @@ export interface Settings {
 
 export interface GenerationConfig {
   provider: string | null;
-  models: { ranker: string; classifier: string; comparison: string };
+  models: { ranker: string; helper: string; classifier: string; comparison: string[] };
+  access: "jev" | "text-model";
   prices: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number } | null | string>;
   search: string;
   freeSources: string[];
@@ -100,6 +101,41 @@ export interface GenerationConfig {
   monthlyCapUsd: number;
   scheduler: { workerRegistered?: boolean; jobs?: { name: string; schedule: string; active: boolean; lastRun: { status: string; started: string; message: string } | null }[]; error?: string };
   sources: { url: string; label?: string }[];
+}
+
+export type ModelProvider = "google" | "anthropic";
+export type KeyName = ModelProvider | "typesafe";
+
+export interface ModelSettings {
+  config: { provider: ModelProvider; main: string; helper: string; compare: string[] };
+  saved: boolean;
+  keys: Record<KeyName, { set: boolean; last4: string | null; source: "settings" | "server" | null }>;
+  access: "jev" | "text-model";
+  defaults: { providers: Record<ModelProvider, { main: string; helper: string }>; compare: string[] };
+  prices: Record<string, { input: number; output: number } | null>;
+}
+
+export interface ModelSettingsUpdate {
+  provider: ModelProvider;
+  main: string;
+  helper: string;
+  compare?: string[];
+  keys?: Partial<Record<KeyName, string | null>>;
+}
+
+/** Only the parts of a job's checkpoint the comparison view reads. */
+export interface JobDetail extends Job {
+  checkpoint?: {
+    log?: string[];
+    candidates?: { id: string; url: string; title?: string; publisher?: string; status: string }[];
+    comparison?: {
+      model: string;
+      provider?: string;
+      costUsd: number;
+      batchNote?: string;
+      selections: { candidateId: string; rank: number; score: number; whyMatters: string; isSurprise: boolean }[];
+    }[];
+  };
 }
 
 export interface RecommendationEntry {

@@ -59,7 +59,7 @@ export async function publish(db: SupabaseClient, job: JobRow, cp: Checkpoint, h
     owner_id: job.owner_id, horizon, period_key: job.period_key, window_start: cp.window.start, window_end: cp.window.end,
     window_label: cp.window.label, time_zone: cp.window.timeZone, version, status: "generating", status_reason: composed.statusReason ?? ranking.batchNote ?? null,
     target_count: target, preference_version: ctx.preferenceVersion,
-    model: { provider: "anthropic", ranker: ranking.model, promptVersion: ranking.promptVersion, jobId: job.id, kind: job.kind },
+    model: { provider: ranking.provider ?? null, ranker: ranking.model, promptVersion: ranking.promptVersion, jobId: job.id, kind: job.kind },
     cost: { actualUsd: cp.cost.actualUsd, calls: cp.cost.calls.length, fetches: cp.cost.fetches, searches: cp.cost.searches },
   }).select("id").single();
   if (batchIns.error) throw new Error(`batch insert failed: ${batchIns.error.message}`);

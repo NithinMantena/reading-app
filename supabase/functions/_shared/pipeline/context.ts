@@ -29,6 +29,8 @@ export async function loadContext(db: SupabaseClient, ownerId: string, horizon: 
   for (const e of (surfaced ?? []) as unknown as Array<{ batch: { horizon: string; period_key: string } | null; reading: { canonical_url: string | null } | null }>) {
     const url = e.reading?.canonical_url;
     if (!url) continue;
+    // A comparison re-ranks the period's real pool, including what its edition already shows.
+    if (kind === "model_comparison" && e.batch?.horizon === horizon && e.batch?.period_key === periodKey) continue;
     if (e.batch?.horizon === horizon) same.push(url);
     else other.push(url);
   }
@@ -61,7 +63,7 @@ export async function loadContext(db: SupabaseClient, ownerId: string, horizon: 
       .select("reading_id, slot, is_surprise, why_matters, why_fits, evidence_depth, ranking_evidence, previously_suggested, batch_id, reading:reading_items!inner(canonical_url)")
       .in("batch_id", batches.map((b) => b.id));
     const urls = (entries ?? []).map((e) => (e as unknown as { reading: { canonical_url: string | null } }).reading?.canonical_url).filter((u): u is string => Boolean(u));
-    ctx.surfacedSameHorizon = [...new Set([...ctx.surfacedSameHorizon, ...urls])];
+    if (kind !== "model_comparison") ctx.surfacedSameHorizon = [...new Set([...ctx.surfacedSameHorizon, ...urls])];
     if (kind === "fill_missing") {
       const latest = sourceBatchId ?? batches[0].id;
       ctx.keepEntries = (entries ?? []).filter((e) => e.batch_id === latest).map((e) => ({
