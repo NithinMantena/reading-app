@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type ImportReport } from "../lib/api";
+import { api, type CsvImportReport, type ImportReport } from "../lib/api";
+import { fillMissingCovers, type CoverProgress } from "../lib/covers";
 import type { IntegrationToken, Settings } from "../lib/types";
 import { fmtDateTime } from "../lib/format";
 import { useAuth } from "../auth/AuthProvider";
@@ -246,11 +247,28 @@ function TokensSection() {
   );
 }
 
+const FIELD_LABEL: Record<string, string> = {
+  title: "Title", authors: "Authors", isbn: "ISBN", edition: "Edition", topics: "Topics", library_status: "Status",
+  started_on: "Started", finished_on: "Finished", rating: "Rating", session_notes: "Session notes", notes: "Notes",
+  why_read: "Why read", recommended_by: "Recommended by", archived: "Archived", cover_url: "Cover URL",
+};
+
+function showValue(v: unknown): string {
+  if (v === null || v === undefined || v === "" || (Array.isArray(v) && !v.length)) return "—";
+  const s = Array.isArray(v) ? v.join("; ") : typeof v === "boolean" ? (v ? "yes" : "no") : String(v).replace(/_/g, " ");
+  return s.length > 80 ? `${s.slice(0, 80)}…` : s;
+}
+
+type Pending =
+  | { kind: "json"; data: unknown; report: ImportReport }
+  | { kind: "csv"; csv: string; name: string; report: CsvImportReport };
+
 function DataSection() {
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [pending, setPending] = useState<{ data: unknown; report: ImportReport } | null>(null);
+  const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
+  const [covers, setCovers] = useState<CoverProgress | null>(null);
 
   const download = (name: string, content: string, type: string) => {
     const blob = new Blob([content], { type });
@@ -270,34 +288,65 @@ function DataSection() {
     if (!f) return;
     setBusy(true);
     try {
-      const data = JSON.parse(await f.text());
-      setPending({ data, report: await api.transfer.importPreview(data) });
+      const text = await f.text();
+      const looksJson = /\.json$/i.test(f.name) || /^\s*[{[]/.test(text);
+      if (looksJson) {
+        const data = JSON.parse(text);
+        setPending({ kind: "json", data, report: await api.transfer.importPreview(data) });
+      } else {
+        setPending({ kind: "csv", csv: text, name: f.name, report: await api.transfer.csvPreview(text) });
+      }
     } catch (e) { toast.fail(e, "Could not read that file"); } finally { setBusy(false); if (fileRef.current) fileRef.current.value = ""; }
+  };
+  const refreshCovers = async () => {
+    const fresh = await api.books.list({ limit: 500, sort: "updated" });
+    const missing = fresh.items.filter((b) => !b.cover_url);
+    if (!missing.length) return;
+    const r = await fillMissingCovers(missing, setCovers);
+    setCovers(null);
+    invalidate("books");
+    toast.notify(`Covers: found ${r.found} of ${r.total} missing`);
   };
   const commit = async () => {
     if (!pending) return;
     setBusy(true);
     try {
-      const r = await api.transfer.importCommit(pending.data);
-      toast.notify(`Imported ${r.books.create} books, ${r.readings.create} readings, ${r.feedback.create} feedback events`);
-      setPending(null);
+      if (pending.kind === "json") {
+        const r = await api.transfer.importCommit(pending.data);
+        toast.notify(`Imported ${r.books.create} books, ${r.readings.create} readings, ${r.feedback.create} feedback events`);
+        setPending(null);
+      } else {
+        const r = await api.transfer.csvCommit(pending.csv);
+        const a = r.applied ?? { updated: 0, created: 0, duplicates: 0, failed: 0 };
+        toast.notify(`Updated ${a.updated} books${a.created ? `, added ${a.created}` : ""}${a.failed ? `, ${a.failed} failed (see the list)` : ""}`);
+        invalidate("books");
+        if (a.failed) setPending({ ...pending, report: r });
+        else setPending(null);
+        if (a.updated || a.created) void refreshCovers();
+      }
     } catch (e) { toast.fail(e); } finally { setBusy(false); }
   };
+
+  const csvReport = pending?.kind === "csv" ? pending.report : null;
+  const csvChanges = csvReport ? csvReport.updates.length + csvReport.creates.length : 0;
   return (
     <section className="card">
       <h2>Your data</h2>
       <p className="small muted">Exports contain books, sessions, readings, feedback, and preferences. They never include tokens.</p>
+      <p className="small muted">To edit books in bulk: export the books CSV, change it in a spreadsheet (keep the id column), and upload it here. You'll see every change before anything is saved. Covers for new or changed ISBNs are fetched afterwards.</p>
       <div className="row">
         <button className="btn" onClick={() => void exportJson()}>Export everything (JSON)</button>
         <button className="btn" onClick={() => void exportCsv()}>Export books (CSV)</button>
         <label className="btn">
-          {busy ? "Reading…" : "Import JSON…"}
-          <input ref={fileRef} type="file" accept="application/json" className="sr-only" onChange={(e) => void pickFile(e.target.files?.[0])} />
+          {busy ? "Reading…" : "Upload JSON or books CSV…"}
+          <input ref={fileRef} type="file" accept=".json,.csv,application/json,text/csv" className="sr-only" onChange={(e) => void pickFile(e.target.files?.[0])} />
         </label>
       </div>
-      <Modal open={pending !== null} title="Import preview" onClose={() => setPending(null)}
+      {covers && <p className="small muted" style={{ marginTop: "0.5rem" }}>Finding covers… {covers.done}/{covers.total} ({covers.found} found)</p>}
+
+      <Modal open={pending?.kind === "json"} title="Import preview" onClose={() => setPending(null)}
         footer={<><button className="btn" onClick={() => setPending(null)}>Cancel</button><button className="btn primary" disabled={busy} onClick={() => void commit()}>Import</button></>}>
-        {pending && (
+        {pending?.kind === "json" && (
           <div className="stack small">
             <div>Books: create {pending.report.books.create}, skip {pending.report.books.skipDuplicate} duplicates, {pending.report.books.skipExistingId} already present</div>
             <div>Reading sessions: create {pending.report.reading_sessions.create}, skip {pending.report.reading_sessions.skipExistingId + pending.report.reading_sessions.skipMissingBook}</div>
@@ -306,6 +355,43 @@ function DataSection() {
             <div>Preferences: {pending.report.preferences}</div>
             {pending.report.problems.length > 0 && <div className="notice">{pending.report.problems.slice(0, 10).join("; ")}{pending.report.problems.length > 10 ? "…" : ""}</div>}
             <p className="muted">Nothing existing is overwritten. Duplicate imports do not multiply records.</p>
+          </div>
+        )}
+      </Modal>
+
+      <Modal open={csvReport !== null} title={csvReport?.applied ? "Upload results" : `Changes in ${pending?.kind === "csv" ? pending.name : "file"}`} onClose={() => setPending(null)}
+        footer={<>
+          <button className="btn" onClick={() => setPending(null)}>{csvReport?.applied ? "Close" : "Cancel"}</button>
+          {!csvReport?.applied && <button className="btn primary" disabled={busy || csvChanges === 0} onClick={() => void commit()}>{busy ? "Applying…" : `Apply ${csvChanges} change${csvChanges === 1 ? "" : "s"}`}</button>}
+        </>}>
+        {csvReport && (
+          <div className="stack small">
+            <div>{csvReport.rows} rows: {csvReport.updates.length} books change, {csvReport.creates.length} new, {csvReport.unchanged} unchanged.</div>
+            {csvReport.applied && <div>Applied: {csvReport.applied.updated} updated, {csvReport.applied.created} added, {csvReport.applied.failed} failed.</div>}
+            {csvReport.problems.length > 0 && (
+              <div className="notice">
+                <strong>Needs a look ({csvReport.problems.length})</strong>
+                <ul style={{ margin: "0.25rem 0 0", paddingLeft: "1.1rem" }}>{csvReport.problems.slice(0, 50).map((p, i) => <li key={i}>{p}</li>)}</ul>
+              </div>
+            )}
+            {csvReport.updates.length > 0 && (
+              <div className="table-wrap" style={{ maxHeight: 360, overflow: "auto" }}>
+                <table>
+                  <thead><tr><th>Book</th><th>Field</th><th>Now</th><th>After upload</th></tr></thead>
+                  <tbody>
+                    {csvReport.updates.flatMap((u) => u.changes.map((c, i) => (
+                      <tr key={`${u.id}-${c.field}`}>
+                        <td>{i === 0 ? <>{u.title}{u.staleWarning && <> <Badge tone="amber">edited in the app after export</Badge></>}</> : ""}</td>
+                        <td>{FIELD_LABEL[c.field] ?? c.field}</td>
+                        <td className="muted">{showValue(c.from)}</td>
+                        <td>{showValue(c.to)}</td>
+                      </tr>
+                    )))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {csvReport.creates.length > 0 && <div>New books: {csvReport.creates.map((c) => c.title).join(", ")}</div>}
           </div>
         )}
       </Modal>

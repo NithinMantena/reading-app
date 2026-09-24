@@ -125,6 +125,8 @@ export const api = {
     exportBooksCsv: () => call<string>("GET", "/export/books.csv", undefined, { raw: true }),
     importPreview: (data: unknown) => call<ImportReport>("POST", "/import", { mode: "preview", data }),
     importCommit: (data: unknown) => call<ImportReport>("POST", "/import", { mode: "commit", data }),
+    csvPreview: (csv: string) => call<CsvImportReport>("POST", "/import/books-csv", { mode: "preview", csv }),
+    csvCommit: (csv: string) => call<CsvImportReport>("POST", "/import/books-csv", { mode: "commit", csv }),
   },
 };
 
@@ -136,4 +138,14 @@ export interface ImportReport {
   feedback: { create: number; skipExistingId: number };
   preferences: string;
   problems: string[];
+}
+
+export interface CsvImportReport {
+  mode: "preview" | "commit";
+  rows: number;
+  updates: { row: number; id: string; title: string; changes: { field: string; from: unknown; to: unknown }[]; staleWarning?: boolean }[];
+  creates: { row: number; title: string }[];
+  unchanged: number;
+  problems: string[];
+  applied?: { updated: number; created: number; duplicates: number; failed: number };
 }

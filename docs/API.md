@@ -129,7 +129,8 @@ Bearer token; that call may be long-running and may advance other queued jobs fo
 | Method | Path | Scope | Notes |
 | --- | --- | --- | --- |
 | GET | `/export` | read | JSON of preferences, books, sessions, readings, feedback, summaries, batches, entries. Never includes tokens. |
-| GET | `/export/books.csv` | read | Books with their latest session. |
+| GET | `/export/books.csv` | read | Books with their latest session, plus `updated_at` so a re-upload can spot rows edited in the app since export. |
+| POST | `/import/books-csv` | library:write | `{ mode: "preview" | "commit", csv }`. Re-upload an edited books CSV. Rows match by `id`; only cells that differ are written (through the normal book update, so sessions stay consistent); rows without a known id are added unless the book already exists. Unreadable cells (spreadsheet-mangled ISBNs, bad dates or statuses) and cut-off rows are reported and left unchanged. Changing an ISBN clears an auto-found Open Library cover so it can be looked up again. |
 | POST | `/import` | library:write | `{ mode: "preview" | "commit", data }`. Existing ids, duplicate books (ISBN or title+author), and duplicate URLs are skipped; nothing is overwritten. |
 
 ### Misc

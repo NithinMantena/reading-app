@@ -60,6 +60,16 @@ export const list: Handler = async (ctx, _p, _b, url) => {
 
 export const get: Handler = async (ctx, p) => ({ status: 200, body: await fetchBook(ctx, p.id) });
 
+/**
+ * Store ISBNs as bare digits (and a final X for ISBN-10), whatever punctuation they arrive
+ * with: hyphens, spaces, stray quotes. Anything that isn't recognisably an ISBN is kept as typed.
+ */
+export function normalizeIsbn(v: string | null): string | null {
+  if (v === null) return null;
+  const bare = v.replace(/[^0-9Xx]/g, "").toUpperCase();
+  return /^(\d{9}[\dX]|\d{13})$/.test(bare) && /^[\s"'0-9Xx-]+$/.test(v) ? bare : v.trim() || null;
+}
+
 function bookFields(body: Record<string, unknown>, creating: boolean): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   const title = creating ? reqString(body.title, "title", 500) : optString(body.title, "title", 500);
@@ -70,7 +80,7 @@ function bookFields(body: Record<string, unknown>, creating: boolean): Record<st
   if (unknown !== undefined) out.author_unknown = unknown;
   for (const f of ["isbn", "edition", "cover_url", "description", "recommended_by", "why_read", "notes"] as const) {
     const v = optString(body[f], f, f === "description" || f === "notes" ? 20000 : 1000);
-    if (v !== undefined) out[f] = v;
+    if (v !== undefined) out[f] = f === "isbn" ? normalizeIsbn(v) : v;
   }
   const topics = optStringArray(body.topics, "topics");
   if (topics !== undefined) out.topics = topics;

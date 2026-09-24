@@ -10,7 +10,7 @@ import { invalidate, useQuery } from "../lib/cache";
 import { filterBooks, queries } from "../lib/queries";
 import { Empty, Modal, StatusBadge } from "../components/ui";
 import { BookForm, fromBook, toPayload, type BookFormValues } from "../components/BookForm";
-import { findCover } from "../lib/openlibrary";
+import { fillMissingCovers } from "../lib/covers";
 
 type Tab = "all" | LibraryStatus | "archived";
 const TABS: { id: Tab; label: string }[] = [
@@ -55,26 +55,11 @@ export function Library() {
 
   const missingCovers = useMemo(() => (data?.items ?? []).filter((b) => !b.cover_url), [data]);
 
-  // Fill in cover links from Open Library, one book at a time to stay polite to its API.
-  // Only the link is saved; images load from Open Library, not from our database.
   const findMissingCovers = async () => {
-    const list = missingCovers;
-    setCoverRun({ done: 0, total: list.length, found: 0 });
-    let found = 0;
-    for (const [i, b] of list.entries()) {
-      try {
-        const url = await findCover(b);
-        if (url) {
-          await api.books.patch(b.id, { cover_url: url, version: b.version });
-          found++;
-        }
-      } catch { /* skip this book; a later run can retry it */ }
-      setCoverRun({ done: i + 1, total: list.length, found });
-      await new Promise((r) => setTimeout(r, 400));
-    }
+    const r = await fillMissingCovers(missingCovers, setCoverRun);
     setCoverRun(null);
     invalidate("books");
-    toast.notify(`Found covers for ${found} of ${list.length} books${found < list.length ? ". The rest can be set by hand under Edit → Cover image URL." : "."}`);
+    toast.notify(`Found covers for ${r.found} of ${r.total} books${r.found < r.total ? ". The rest can be set by hand under Edit → Cover image URL." : "."}`);
   };
 
   const submit = async () => {

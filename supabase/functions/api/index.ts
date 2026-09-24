@@ -14,6 +14,7 @@ import * as recommendations from "./handlers/recommendations.ts";
 import * as jobs from "./handlers/jobs.ts";
 import * as tokens from "./handlers/tokens.ts";
 import * as transfer from "./handlers/transfer.ts";
+import * as booksCsv from "./handlers/booksCsv.ts";
 import * as me from "./handlers/me.ts";
 import * as config from "./handlers/config.ts";
 import * as models from "./handlers/models.ts";
@@ -119,6 +120,7 @@ route("DELETE", "/v1/integration-tokens/:id", "admin", tokens.revoke);
 route("GET", "/v1/export", "read", transfer.exportJson);
 route("GET", "/v1/export/books.csv", "read", transfer.exportBooksCsv);
 route("POST", "/v1/import", "library:write", transfer.importJson);
+route("POST", "/v1/import/books-csv", "library:write", booksCsv.importBooksCsv);
 
 // --- Dispatcher ---------------------------------------------------------------------
 function apiPath(url: URL): string {

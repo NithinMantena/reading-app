@@ -41,7 +41,7 @@ function csvCell(v: unknown): string {
 export const exportBooksCsv: Handler = async (ctx) => {
   const res = await ctx.db.from("books_with_latest_session").select("*").eq("owner_id", ctx.ownerId).order("created_at");
   if (res.error) throw fromPgError(res.error);
-  const cols = ["id", "title", "authors", "isbn", "edition", "topics", "library_status", "started_on", "finished_on", "rating", "session_notes", "notes", "why_read", "recommended_by", "archived_at", "created_at"];
+  const cols = ["id", "title", "authors", "isbn", "edition", "topics", "library_status", "started_on", "finished_on", "rating", "session_notes", "notes", "why_read", "recommended_by", "archived_at", "created_at", "updated_at"];
   const lines = [cols.join(",")];
   for (const row of res.data ?? []) lines.push(cols.map((c) => csvCell((row as Record<string, unknown>)[c])).join(","));
   const resp = new Response(lines.join("\r\n"), {
