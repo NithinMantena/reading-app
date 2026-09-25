@@ -86,5 +86,5 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
-          supabase functions deploy api --no-verify-jwt --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}"
+          supabase functions deploy api --no-verify-jwt --use-api --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}"
           supabase functions deploy worker --no-verify-jwt --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}"

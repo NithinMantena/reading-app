@@ -118,6 +118,23 @@ in your client's configuration. For Claude Desktop, merge this entry into the ex
 The configuration contains paths, not the token itself. Restart the client after changing it.
 Use either the Docker profile or the direct server for Reading to avoid duplicate tools.
 
+## Remote connector (claude.ai and ChatGPT on the web and mobile)
+
+The `api` Edge Function also serves these same 30 tools at a URL, for apps whose
+connector settings only accept a URL:
+
+```text
+https://ijwafrfvsojhouebgzkh.supabase.co/functions/v1/api/k/<rap_ token>/mcp
+```
+
+It runs this folder's `createServer()` (`supabase/functions/api/mcp.ts`), and every
+tool call goes through the API with that token, so scopes, versions and idempotency
+are exactly as for the Docker server. Create a separate token for it on the website
+(Preferences → OpenClaw integration), with every scope you want the connector to
+have. The URL contains the token: treat it as a password, and revoke the token to
+cut the connector off. Clients that can send headers may use `/mcp` with
+`Authorization: Bearer <token>` instead.
+
 ## What to ask Claude or Codex
 
 - “Show my weekly discovery articles and explain why each was recommended.”

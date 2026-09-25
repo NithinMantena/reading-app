@@ -19,6 +19,7 @@ import * as me from "./handlers/me.ts";
 import * as config from "./handlers/config.ts";
 import * as models from "./handlers/models.ts";
 import { loadModelSetup, providerReady } from "../_shared/pipeline/setup.ts";
+import { createRemoteMcp } from "./mcp.ts";
 
 export type Handler = (
   ctx: Ctx,
@@ -130,7 +131,7 @@ function apiPath(url: URL): string {
   return p || "/";
 }
 
-Deno.serve(async (req: Request) => {
+async function handle(req: Request): Promise<Response> {
   const requestId = crypto.randomUUID().slice(0, 8);
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
 
@@ -173,6 +174,25 @@ Deno.serve(async (req: Request) => {
     const headers: Record<string, string> = { "x-request-id": requestId };
     if ((result as { replayed?: boolean }).replayed) headers["idempotent-replayed"] = "true";
     return json(result.body, result.status, headers);
+  } catch (err) {
+    return errorResponse(err, requestId);
+  }
+}
+
+// Remote MCP for URL-only connectors (claude.ai / ChatGPT web and mobile):
+// /k/<integration token>/mcp, or /mcp with a Bearer token. The token is checked
+// here, then again by every API call the tools make.
+const remoteMcp = createRemoteMcp(handle);
+
+Deno.serve(async (req: Request) => {
+  const remote = /^\/(?:k\/([^/]+)\/)?mcp\/?$/.exec(apiPath(new URL(req.url)));
+  if (!remote) return handle(req);
+  const requestId = crypto.randomUUID().slice(0, 8);
+  try {
+    const token = remote[1] ? decodeURIComponent(remote[1]) : (/^Bearer\s+(.+)$/i.exec(req.headers.get("authorization") ?? "")?.[1] ?? "").trim();
+    if (!token.startsWith("rap_")) throw new ApiError(401, "invalid_token", "Use a Reading integration token (rap_...)");
+    await authenticate(new Request(req.url, { headers: { authorization: `Bearer ${token}` } }), requestId);
+    return await remoteMcp(req, token);
   } catch (err) {
     return errorResponse(err, requestId);
   }
